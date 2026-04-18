@@ -1,0 +1,36 @@
+app:
+  window_title: FujiBooth
+  fullscreen: true
+  countdown_seconds: 5
+  freeze_seconds: 10
+  print_button_seconds: 5
+
+camera:
+  usb:
+    enabled: false
+    vendor_id: "04cb"
+    product_ids: []
+    camera_name_contains: "FUJIFILM"
+  sdk:
+    sdk_root: "./sdk"
+    library_path: ""
+    capture_dir: "./runtime/sdk_captures"
+    live_view_interval_ms: 120
+
+storage:
+  output_dir: "./runtime/output"
+  incoming_dir: "./runtime/incoming"
+  accepted_extensions: [".jpg", ".jpeg", ".png", ".raf", ".heic"]
+  filename_pattern: "%Y%m%d_%H%M%S"
+
+printing:
+  enabled: false
+  command: ""
+
+ui:
+  background_color: "#111111"
+  status_connected_color: "#16a34a"
+  status_disconnected_color: "#dc2626"
+  thumbnail_width: 220
+  thumbnail_height: 146
+  bottom_gallery_height: 210
