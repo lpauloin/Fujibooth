@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRect, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QMouseEvent, QPixmap, QResizeEvent, QWheelEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -45,9 +45,11 @@ class LiveViewWidget(QFrame):
 
     def __init__(self) -> None:
         super().__init__()
-
         self.setFrameShape(QFrame.NoFrame)
         self.setObjectName("LiveViewWidget")
+        self._pixmap = QPixmap()
+        self._freeze_frame = False
+
         self.setStyleSheet(
             """
             QFrame#LiveViewWidget {
@@ -65,15 +67,6 @@ class LiveViewWidget(QFrame):
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumHeight(480)
         self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.image_label.setStyleSheet(
-            """
-            QLabel {
-                background: #000000;
-                border-radius: 16px;
-            }
-            """
-        )
-        self.image_label.clicked.connect(self.clicked)
         layout.addWidget(self.image_label)
 
         self.overlay = QLabel(self.image_label)
@@ -85,23 +78,37 @@ class LiveViewWidget(QFrame):
         self.status_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.status_badge.hide()
 
-        self._pixmap = QPixmap()
-        self._status_text = ""
-        self._status_color = "#666666"
+        self.image_label.clicked.connect(self.clicked)
+        self._apply_frame_style()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
-        self._update_overlay_geometry()
+        self.overlay.setGeometry(self.image_label.rect())
         self._update_status_badge_position()
         self._render_pixmap()
 
-    def _update_overlay_geometry(self) -> None:
-        self.overlay.setGeometry(self.image_label.rect())
+    def _apply_frame_style(self) -> None:
+        border = "10px solid #2f80ff" if self._freeze_frame else "none"
+        self.image_label.setStyleSheet(
+            f"""
+            QLabel {{
+                background: #000000;
+                border-radius: 18px;
+                border: {border};
+            }}
+            """
+        )
+
+    def set_freeze_frame(self, enabled: bool) -> None:
+        self._freeze_frame = enabled
+        self._apply_frame_style()
 
     def _update_status_badge_position(self) -> None:
-        if not self.status_badge.isHidden():
-            self.status_badge.adjustSize()
-            self.status_badge.move(20, 20)
+        if self.status_badge.isHidden():
+            return
+        self.status_badge.adjustSize()
+        self.status_badge.move(20, 20)
+        self.status_badge.raise_()
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self._pixmap = pixmap
@@ -136,11 +143,11 @@ class LiveViewWidget(QFrame):
                 color: white;
                 font-size: {font_px}px;
                 font-weight: 900;
-                border-radius: 16px;
+                border-radius: 18px;
             }}
             """
         )
-        self._update_overlay_geometry()
+        self.overlay.setGeometry(self.image_label.rect())
         self.overlay.show()
         self.overlay.raise_()
 
@@ -150,10 +157,6 @@ class LiveViewWidget(QFrame):
 
     def set_status(self, text: str, color: str) -> None:
         text = (text or "").strip()
-
-        self._status_text = text
-        self._status_color = color
-
         if not text:
             self.clear_status()
             return
@@ -177,7 +180,6 @@ class LiveViewWidget(QFrame):
         self.status_badge.raise_()
 
     def clear_status(self) -> None:
-        self._status_text = ""
         self.status_badge.clear()
         self.status_badge.hide()
 
@@ -266,7 +268,9 @@ class GalleryWidget(QWidget):
         if not photos:
             return
 
-        self.layout.takeAt(self.layout.count() - 1)
+        last_item = self.layout.takeAt(self.layout.count() - 1)
+        if last_item is not None:
+            del last_item
 
         for photo in photos:
             thumb = ThumbnailButton(photo, self.thumb_w, self.thumb_h)
