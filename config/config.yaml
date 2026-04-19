@@ -1,13 +1,13 @@
 app:
   window_title: FujiBooth
-  fullscreen: true
+  fullscreen: false
   countdown_seconds: 5
   freeze_seconds: 10
   print_button_seconds: 5
 
 camera:
   usb:
-    enabled: false
+    enabled: true
     vendor_id: "04cb"
     product_ids: []
     camera_name_contains: "FUJIFILM"
