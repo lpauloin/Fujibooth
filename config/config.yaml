@@ -9,7 +9,7 @@ camera:
   usb:
     enabled: true
     vendor_id: "04cb"
-    product_ids: []
+    product_ids: ["02e6"]
     camera_name_contains: "FUJIFILM"
   sdk:
     sdk_root: "./sdk"

@@ -350,9 +350,10 @@ class USBMonitor(QObject):
                     f"vendor_ok={vendor_ok} product_ok={product_ok} name_ok={name_ok}"
                 )
 
-                # Rule 1: exact/strong match
+                # 1) strongest match: vendor + product + name
                 if vendor_ok and product_ok and name_ok:
                     label = manufacturer or product or "FUJIFILM"
+                    print("[USB-MONITOR] accepting device on full match")
                     return {
                         "label": f"{label} connecté",
                         "serial": serial or "UNKNOWN",
@@ -360,11 +361,22 @@ class USBMonitor(QObject):
                         "product_id": f"{dev.idProduct:04x}",
                     }
 
-                # Rule 2: vendor-only fallback
-                # Important for macOS where product often appears as "USB PTP Camera"
-                if vendor_ok and not expected_products:
-                    print("[USB-MONITOR] accepting device on vendor-only fallback")
+                # 2) practical match: vendor + product
+                # Important for macOS where the camera often appears as "USB PTP Camera"
+                if vendor_ok and product_ok:
                     label = manufacturer or product or "FUJIFILM"
+                    print("[USB-MONITOR] accepting device on vendor+product match")
+                    return {
+                        "label": f"{label} connecté",
+                        "serial": serial or "UNKNOWN",
+                        "vendor_id": f"{dev.idVendor:04x}",
+                        "product_id": f"{dev.idProduct:04x}",
+                    }
+
+                # 3) fallback: vendor only, only if there is no configured product filter
+                if vendor_ok and not expected_products:
+                    label = manufacturer or product or "FUJIFILM"
+                    print("[USB-MONITOR] accepting device on vendor-only fallback")
                     return {
                         "label": f"{label} connecté",
                         "serial": serial or "UNKNOWN",
