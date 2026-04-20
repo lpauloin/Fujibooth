@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from enum import Enum, auto
 from pathlib import Path
 
@@ -23,14 +21,7 @@ class SessionState(Enum):
 
 
 class FujifilmSdkBackend(CameraBackend):
-    def __init__(
-        self,
-        settings: Settings,
-        *,
-        adapter: CameraSdkAdapter | None = None,
-        capture_dir: Path | None = None,
-        live_view_interval_ms: int | None = None,
-    ) -> None:
+    def __init__(self, settings, *, adapter=None, capture_dir=None, live_view_interval_ms=None):
         super().__init__()
         self.settings = settings
 
@@ -72,15 +63,15 @@ class FujifilmSdkBackend(CameraBackend):
         )
 
     # ------------------------------------------------------------
-    # state helpers
+    # State helpers
     # ------------------------------------------------------------
 
-    def _set_session_state(self, state: SessionState, reason: str = "") -> None:
+    def _set_session_state(self, state, reason=""):
         if self.state != state:
             print(f"[SDK] session state {self.state.name} -> {state.name} reason={reason}")
         self.state = state
 
-    def _emit_backend_state_from_session(self) -> None:
+    def _emit_backend_state_from_session(self):
         mapping = {
             SessionState.STOPPED: BackendState.WAITING_FOR_CAMERA,
             SessionState.WAITING_USB: BackendState.WAITING_FOR_CAMERA,
@@ -92,7 +83,7 @@ class FujifilmSdkBackend(CameraBackend):
         }
         self.emit_backend_state(mapping[self.state])
 
-    def _is_session_open(self) -> bool:
+    def _is_session_open(self):
         try:
             connected = self.adapter.is_connected()
             print(f"[SDK] _is_session_open() -> {connected}")
@@ -101,17 +92,49 @@ class FujifilmSdkBackend(CameraBackend):
             print(f"[SDK] _is_session_open() error: {exc}")
             return False
 
-    def _schedule_reconnect(self) -> None:
+    def _schedule_reconnect(self):
         if self._usb_present and not self._stopping:
             print("[SDK] schedule reconnect")
             self.connect_timer.stop()
             self.connect_timer.start()
 
+    def _pause_runtime_activity(self):
+        live_active = self.live_timer.isActive()
+        health_active = self.health_timer.isActive()
+
+        print(
+            f"[SDK] _pause_runtime_activity() "
+            f"live_active={live_active} health_active={health_active}"
+        )
+
+        self.live_timer.stop()
+        self.health_timer.stop()
+        return live_active, health_active
+
+    def _resume_runtime_activity(self, *, live_active, health_active):
+        print(
+            f"[SDK] _resume_runtime_activity() "
+            f"live_active={live_active} health_active={health_active}"
+        )
+
+        if self._stopping:
+            return
+
+        if not self._is_session_open():
+            print("[SDK] _resume_runtime_activity skipped: session not open")
+            return
+
+        if health_active:
+            self.health_timer.start()
+
+        if live_active and self.state is SessionState.LIVE:
+            self.live_timer.start()
+
     # ------------------------------------------------------------
-    # lifecycle
+    # Lifecycle
     # ------------------------------------------------------------
 
-    def start(self) -> None:
+    def start(self):
         if self.state is not SessionState.STOPPED:
             return
 
@@ -131,7 +154,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._set_session_state(SessionState.WAITING_USB, "backend started")
         self._emit_backend_state_from_session()
 
-    def stop(self) -> None:
+    def stop(self):
         print("[SDK] stop()")
         self._stopping = True
 
@@ -147,15 +170,15 @@ class FujifilmSdkBackend(CameraBackend):
             try:
                 self.adapter.stop()
             except Exception as exc:
-                print(f"[SDK] adapter.stop ignore: {exc}")
+                print(f"[SDK] adapter.stop ignored: {exc}")
 
             self._set_session_state(SessionState.STOPPED, "backend stopped")
 
     # ------------------------------------------------------------
-    # usb driven entry points
+    # USB-driven entry points
     # ------------------------------------------------------------
 
-    def handle_usb_connected(self, payload: dict | None = None) -> None:
+    def handle_usb_connected(self, payload=None):
         print(f"[SDK] handle_usb_connected payload={payload}")
         self._usb_present = True
 
@@ -173,7 +196,7 @@ class FujifilmSdkBackend(CameraBackend):
 
         self._schedule_reconnect()
 
-    def handle_usb_disconnected(self) -> None:
+    def handle_usb_disconnected(self):
         print("[SDK] handle_usb_disconnected()")
         self._usb_present = False
         self._capture_pending = False
@@ -188,10 +211,10 @@ class FujifilmSdkBackend(CameraBackend):
         self._emit_backend_state_from_session()
 
     # ------------------------------------------------------------
-    # connection/session
+    # Connection / session
     # ------------------------------------------------------------
 
-    def _connect_if_possible(self) -> None:
+    def _connect_if_possible(self):
         print(
             f"[SDK] _connect_if_possible() "
             f"stopping={self._stopping} usb_present={self._usb_present} state={self.state.name}"
@@ -218,7 +241,7 @@ class FujifilmSdkBackend(CameraBackend):
 
             self.camera_connected.emit(
                 {
-                    "label": f"{descriptor.model} connecté",
+                    "label": f"{descriptor.model} connected",
                     "serial": descriptor.serial,
                 }
             )
@@ -240,7 +263,7 @@ class FujifilmSdkBackend(CameraBackend):
             self._emit_backend_state_from_session()
             self._schedule_reconnect()
 
-    def _close_session(self, *, emit_signal: bool) -> None:
+    def _close_session(self, *, emit_signal):
         print(f"[SDK] _close_session emit_signal={emit_signal}")
         self.live_timer.stop()
         self.capture_result_timer.stop()
@@ -248,16 +271,16 @@ class FujifilmSdkBackend(CameraBackend):
         try:
             self.adapter.disconnect_camera()
         except Exception as exc:
-            print(f"[SDK] adapter.disconnect_camera ignore: {exc}")
+            print(f"[SDK] adapter.disconnect_camera ignored: {exc}")
 
         if emit_signal:
             self.camera_disconnected.emit()
 
     # ------------------------------------------------------------
-    # live view
+    # Live view
     # ------------------------------------------------------------
 
-    def start_live_view(self) -> None:
+    def start_live_view(self):
         print(f"[SDK] start_live_view() state={self.state.name}")
 
         if self._stopping:
@@ -281,7 +304,7 @@ class FujifilmSdkBackend(CameraBackend):
             print(f"[SDK] start_live_view failed: {exc}")
             self._handle_runtime_error(exc)
 
-    def stop_live_view(self) -> None:
+    def stop_live_view(self):
         print(f"[SDK] stop_live_view() state={self.state.name}")
         self.live_timer.stop()
 
@@ -291,11 +314,11 @@ class FujifilmSdkBackend(CameraBackend):
         try:
             self.adapter.end_live_view()
         except Exception as exc:
-            print(f"[SDK] end_live_view ignore: {exc}")
+            print(f"[SDK] end_live_view ignored: {exc}")
         finally:
             self._set_session_state(SessionState.READY, "live stopped")
 
-    def _restart_live_view_after_capture(self) -> None:
+    def _restart_live_view_after_capture(self):
         print("[SDK] _restart_live_view_after_capture()")
         self.live_timer.stop()
 
@@ -307,8 +330,9 @@ class FujifilmSdkBackend(CameraBackend):
             try:
                 self.adapter.end_live_view()
             except Exception as exc:
-                print(f"[SDK] restart live pre-clean ignore: {exc}")
+                print(f"[SDK] restart live pre-clean ignored: {exc}")
 
+            self._set_session_state(SessionState.READY, "restart live pre-start")
             self.adapter.begin_live_view()
             self.live_timer.start()
             self._set_session_state(SessionState.LIVE, "live restarted after capture")
@@ -318,10 +342,10 @@ class FujifilmSdkBackend(CameraBackend):
             self._handle_runtime_error(exc)
 
     # ------------------------------------------------------------
-    # capture
+    # Capture
     # ------------------------------------------------------------
 
-    def trigger_capture(self) -> None:
+    def trigger_capture(self):
         print(f"[SDK] trigger_capture() state={self.state.name}")
 
         if self._stopping:
@@ -352,7 +376,7 @@ class FujifilmSdkBackend(CameraBackend):
             print(f"[SDK] enqueue_capture failed: {exc}")
             self._handle_runtime_error(exc)
 
-    def _poll_capture_result(self) -> None:
+    def _poll_capture_result(self):
         print(
             f"[SDK] _poll_capture_result() "
             f"state={self.state.name} capture_pending={self._capture_pending}"
@@ -399,10 +423,10 @@ class FujifilmSdkBackend(CameraBackend):
         self._restart_live_view_after_capture()
 
     # ------------------------------------------------------------
-    # polling / health
+    # Polling / health
     # ------------------------------------------------------------
 
-    def _pull_live_frame(self) -> None:
+    def _pull_live_frame(self):
         print(f"[SDK] _pull_live_frame() state={self.state.name}")
 
         if self._stopping:
@@ -428,10 +452,10 @@ class FujifilmSdkBackend(CameraBackend):
             print("[SDK] _pull_live_frame got null frame")
             return
 
-        print(f"[SDK] frame live view reçue size={frame.size()}")
+        print(f"[SDK] live view frame received size={frame.size()}")
         self.live_view_updated.emit(frame)
 
-    def _health_check(self) -> None:
+    def _health_check(self):
         print(
             f"[SDK] _health_check() "
             f"state={self.state.name} usb_present={self._usb_present}"
@@ -457,10 +481,70 @@ class FujifilmSdkBackend(CameraBackend):
             self._handle_session_lost("health check failed")
 
     # ------------------------------------------------------------
-    # errors
+    # Exposure control
     # ------------------------------------------------------------
 
-    def _handle_session_lost(self, reason: str) -> None:
+    def get_exposure_options(self):
+        """
+        Returns supported values per exposure parameter for the current camera mode.
+
+        Each value is a list of (display_label, raw_sdk_int) tuples.
+        Lists are empty for parameters auto-controlled by the current AE mode.
+        """
+        print(f"[SDK] get_exposure_options() state={self.state.name}")
+        if not self._is_session_open():
+            raise RuntimeError("Camera SDK session not open")
+        return self.adapter.get_exposure_options()
+
+    def get_exposure_state(self):
+        """
+        Returns the current exposure settings as raw SDK integer values.
+
+        Keys: 'iso', 'shutter', 'aperture', 'shutter_bulb'.
+        """
+        print(f"[SDK] get_exposure_state() state={self.state.name}")
+        if not self._is_session_open():
+            raise RuntimeError("Camera SDK session not open")
+        return self.adapter.get_exposure_state()
+
+    def set_exposure(self, *, iso=None, shutter=None, aperture=None):
+        """
+        Applies exposure settings.  Parameters are raw SDK integer values
+        as returned by get_exposure_options.  Pass None to leave unchanged.
+        """
+        print(
+            f"[SDK] set_exposure() state={self.state.name} "
+            f"iso={iso} shutter={shutter} aperture={aperture}"
+        )
+
+        if not self._is_session_open():
+            raise RuntimeError("Camera not connected")
+
+        live_active = self.live_timer.isActive()
+        health_active = self.health_timer.isActive()
+
+        if live_active:
+            self.live_timer.stop()
+        if health_active:
+            self.health_timer.stop()
+
+        try:
+            self.adapter.set_exposure(iso=iso, shutter=shutter, aperture=aperture)
+        except Exception as exc:
+            print(f"[SDK] set_exposure() failed: {exc}")
+            raise
+        finally:
+            if self._is_session_open():
+                if health_active:
+                    self.health_timer.start()
+                if live_active:
+                    self.live_timer.start()
+
+    # ------------------------------------------------------------
+    # Error handling
+    # ------------------------------------------------------------
+
+    def _handle_session_lost(self, reason):
         print(f"[SDK] _handle_session_lost reason={reason}")
 
         self.live_timer.stop()
@@ -473,12 +557,12 @@ class FujifilmSdkBackend(CameraBackend):
         self._emit_backend_state_from_session()
         self._schedule_reconnect()
 
-    def _handle_runtime_error(self, exc: Exception) -> None:
+    def _handle_runtime_error(self, exc):
         message = str(exc)
         print(f"[SDK] _handle_runtime_error message={message}")
 
         disconnect_markers = (
-            "session camera sdk non ouverte",
+            "camera sdk session not open",
             "camera not connected",
             "not connected",
             "device not found",
@@ -495,4 +579,19 @@ class FujifilmSdkBackend(CameraBackend):
 
         self.error.emit(message)
         self._set_session_state(SessionState.ERROR, message)
-        self._restart_live_view_after_capture()
+
+        if self._capture_pending or self.state is SessionState.CAPTURING:
+            self._restart_live_view_after_capture()
+            return
+
+        if self._is_session_open():
+            try:
+                self.adapter.end_live_view()
+            except Exception as live_stop_exc:
+                print(f"[SDK] end_live_view after runtime error ignored: {live_stop_exc}")
+
+            self._set_session_state(SessionState.READY, "runtime error recovery")
+            try:
+                self.start_live_view()
+            except Exception as restart_exc:
+                print(f"[SDK] start_live_view after runtime error failed: {restart_exc}")
