@@ -540,7 +540,17 @@ class FujifilmSdkBackend(CameraBackend):
         print(f"[SDK] get_exposure_options() state={self.state.name}")
         if not self._is_session_open():
             raise RuntimeError("Camera SDK session not open")
-        return self.adapter.get_exposure_options()
+        # The macOS SDK processes Core Foundation events during ctypes calls,
+        # allowing the live timer to fire re-entrantly and corrupt the SDK state.
+        # Pause the live timer for the duration of the query.
+        live_active = self.live_timer.isActive()
+        if live_active:
+            self.live_timer.stop()
+        try:
+            return self.adapter.get_exposure_options()
+        finally:
+            if live_active and self.state is SessionState.LIVE:
+                self.live_timer.start()
 
     def get_exposure_state(self):
         """
@@ -551,7 +561,14 @@ class FujifilmSdkBackend(CameraBackend):
         print(f"[SDK] get_exposure_state() state={self.state.name}")
         if not self._is_session_open():
             raise RuntimeError("Camera SDK session not open")
-        return self.adapter.get_exposure_state()
+        live_active = self.live_timer.isActive()
+        if live_active:
+            self.live_timer.stop()
+        try:
+            return self.adapter.get_exposure_state()
+        finally:
+            if live_active and self.state is SessionState.LIVE:
+                self.live_timer.start()
 
     def set_exposure(self, *, iso=None, shutter=None, aperture=None):
         """
