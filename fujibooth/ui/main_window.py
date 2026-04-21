@@ -4,8 +4,6 @@ from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QKeyEvent, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -20,36 +18,61 @@ from ..models.state import BoothState
 from ..services.photo_repository import PhotoRepository
 from ..services.printer import PrintService
 from ..services.usb_monitor import USBMonitor, USBMonitorConfig
+from .exposure_bar import ExposureBarWidget
 from .widgets import GalleryWidget, LiveViewWidget
 
 FREEZE_SECONDS = 10
 RETURN_TO_LIVEVIEW_SECONDS = 5
 
-_COMBO_STYLE = (
-    "QComboBox {"
-    "  background: #1a1a1a;"
-    "  color: white;"
-    "  border: 1px solid #3a3a3a;"
-    "  border-radius: 10px;"
-    "  padding: 8px 12px;"
-    "  font-size: 15px;"
-    "  min-width: 150px;"
-    "}"
-    "QComboBox::drop-down { border: none; width: 28px; }"
-    "QComboBox::down-arrow { width: 12px; height: 12px; }"
-    "QComboBox:disabled { background: #111111; color: #555555; border-color: #222222; }"
-    "QComboBox QAbstractItemView {"
-    "  background: #1a1a1a;"
-    "  color: white;"
-    "  selection-background-color: #2f80ff;"
-    "  border: 1px solid #3a3a3a;"
-    "  outline: none;"
-    "}"
+_PRINT_BUTTON_STYLE = """
+QPushButton {
+    background: #ffffff;
+    color: #000000;
+    border: none;
+    border-radius: 16px;
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: 3px;
+    padding: 0 40px;
+    min-height: 64px;
+}
+QPushButton:hover {
+    background: #f0f0f0;
+}
+QPushButton:pressed {
+    background: #d8d8d8;
+}
+"""
+
+_MESSAGE_STYLE = (
+    "color: #ebebf5;"
+    "font-size: 20px;"
+    "font-weight: 500;"
+    "padding: 4px 0;"
+    "opacity: 0.7;"
 )
 
-_LABEL_STYLE = (
-    "color: #777777; font-size: 11px; font-weight: 700; letter-spacing: 1.5px;"
-)
+_SLIDER_STYLE = """
+QSlider::groove:horizontal {
+    background: #1c1c1e;
+    height: 4px;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    background: #636366;
+    width: 16px;
+    height: 16px;
+    margin: -6px 0;
+    border-radius: 8px;
+}
+QSlider::handle:horizontal:hover {
+    background: #aeaeb2;
+}
+QSlider::sub-page:horizontal {
+    background: #48484a;
+    border-radius: 2px;
+}
+"""
 
 
 class MainWindow(QMainWindow):
@@ -140,31 +163,13 @@ class MainWindow(QMainWindow):
             f"selected_photo={self.selected_photo}"
         )
 
-    def _make_exposure_column(self, label_text, placeholder_text):
-        col = QWidget()
-        col_layout = QVBoxLayout(col)
-        col_layout.setContentsMargins(0, 0, 0, 0)
-        col_layout.setSpacing(5)
-
-        header = QLabel(label_text)
-        header.setStyleSheet(_LABEL_STYLE)
-        col_layout.addWidget(header)
-
-        combo = QComboBox()
-        combo.setMinimumHeight(42)
-        combo.setPlaceholderText(placeholder_text)
-        combo.setStyleSheet(_COMBO_STYLE)
-        col_layout.addWidget(combo)
-
-        return col, combo
-
     def _setup_ui(self):
         print("[UI] _setup_ui()")
         root = QWidget(self)
 
         layout = QVBoxLayout(root)
         layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
 
         self.live_view = LiveViewWidget()
         self.live_view.set_status(
@@ -172,70 +177,23 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.live_view, stretch=1)
 
-        # Exposure controls: labeled columns side-by-side
-        self.exposure_bar = QWidget()
-        self.exposure_bar.setStyleSheet(
-            "QWidget { background: #0d0d0d; border-radius: 14px; }"
-        )
-        exposure_layout = QHBoxLayout(self.exposure_bar)
-        exposure_layout.setContentsMargins(16, 12, 16, 12)
-        exposure_layout.setSpacing(16)
-
-        ae_mode_col, self.ae_mode_combo = self._make_exposure_column("MODE", "P")
-        iso_col, self.iso_combo = self._make_exposure_column("ISO", "ISO AUTO")
-        shutter_col, self.shutter_combo = self._make_exposure_column("SHUTTER", "AUTO")
-        aperture_col, self.aperture_combo = self._make_exposure_column(
-            "APERTURE", "AUTO"
-        )
-
-        self.apply_exposure_button = QPushButton("APPLY")
-        self.apply_exposure_button.setMinimumHeight(42)
-        self.apply_exposure_button.setMinimumWidth(100)
-        self.apply_exposure_button.setStyleSheet("""
-            QPushButton {
-                background: #2f80ff;
-                color: white;
-                border-radius: 10px;
-                font-size: 14px;
-                font-weight: 800;
-                padding: 0 20px;
-                margin-top: 18px;
-            }
-            QPushButton:hover { background: #2467cf; }
-            QPushButton:pressed { background: #1d53a7; }
-            QPushButton:disabled { background: #2a2a2a; color: #555555; }
-            """)
-
-        exposure_layout.addWidget(ae_mode_col)
-        exposure_layout.addWidget(iso_col)
-        exposure_layout.addWidget(shutter_col)
-        exposure_layout.addWidget(aperture_col)
-        exposure_layout.addStretch(1)
-        exposure_layout.addWidget(self.apply_exposure_button, alignment=Qt.AlignBottom)
+        self.exposure_bar = ExposureBarWidget()
+        self.ae_mode_combo = self.exposure_bar.ae_mode_combo
+        self.iso_combo = self.exposure_bar.iso_combo
+        self.shutter_combo = self.exposure_bar.shutter_combo
+        self.aperture_combo = self.exposure_bar.aperture_combo
+        self.apply_exposure_button = self.exposure_bar.apply_button
         self.exposure_bar.hide()
         layout.addWidget(self.exposure_bar)
 
         self.message_label = QLabel("Waiting for FUJIFILM camera")
         self.message_label.setAlignment(Qt.AlignCenter)
-        self.message_label.setStyleSheet(
-            "font-size: 24px; color: #f1f1f1; font-weight: 700; padding: 8px;"
-        )
+        self.message_label.setStyleSheet(_MESSAGE_STYLE)
         layout.addWidget(self.message_label)
 
         self.print_button = QPushButton("PRINT")
-        self.print_button.setFixedHeight(62)
-        self.print_button.setStyleSheet("""
-            QPushButton {
-                background: white;
-                color: black;
-                border-radius: 14px;
-                font-size: 28px;
-                font-weight: 800;
-                padding: 0 30px;
-            }
-            QPushButton:hover { background: #f0f0f0; }
-            QPushButton:pressed { background: #dddddd; }
-            """)
+        self.print_button.setStyleSheet(_PRINT_BUTTON_STYLE)
+        self.print_button.setCursor(Qt.PointingHandCursor)
         self.print_button.hide()
         layout.addWidget(self.print_button, alignment=Qt.AlignCenter)
 
@@ -252,7 +210,8 @@ class MainWindow(QMainWindow):
         self.gallery_slider.setSingleStep(60)
         self.gallery_slider.setPageStep(300)
         self.gallery_slider.setEnabled(False)
-        self.gallery_slider.setFixedHeight(24)
+        self.gallery_slider.setFixedHeight(20)
+        self.gallery_slider.setStyleSheet(_SLIDER_STYLE)
         layout.addWidget(self.gallery_slider)
 
         self.setCentralWidget(root)
@@ -265,7 +224,7 @@ class MainWindow(QMainWindow):
         self.gallery.photo_selected.connect(self.on_photo_selected)
         self.print_button.clicked.connect(self.on_print_clicked)
 
-        self.apply_exposure_button.clicked.connect(self.on_apply_exposure_clicked)
+        self.exposure_bar.apply_clicked.connect(self.on_apply_exposure_clicked)
         self.print_button_timer.timeout.disconnect()
         self.print_button_timer.timeout.connect(self.print_button.hide)
 
@@ -337,11 +296,7 @@ class MainWindow(QMainWindow):
 
     def _set_exposure_controls_enabled(self, enabled):
         print(f"[UI] _set_exposure_controls_enabled enabled={enabled}")
-        self.ae_mode_combo.setEnabled(enabled)
-        self.iso_combo.setEnabled(enabled)
-        self.shutter_combo.setEnabled(enabled)
-        self.aperture_combo.setEnabled(enabled)
-        self.apply_exposure_button.setEnabled(enabled)
+        self.exposure_bar.set_controls_enabled(enabled)
 
     def _set_combo_by_value(self, combo, raw_value):
         """Select the item whose UserRole data matches raw_value."""
