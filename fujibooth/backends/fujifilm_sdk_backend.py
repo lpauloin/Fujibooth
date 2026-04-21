@@ -504,7 +504,16 @@ class FujifilmSdkBackend(CameraBackend):
 
     def set_ae_mode(self, ae_mode):
         print(f"[SDK] set_ae_mode() state={self._state.name} ae_mode={ae_mode}")
+        was_live = self.state is SessionState.LIVE
         live_active, health_active = self._pause_runtime_activity()
+
+        if was_live:
+            try:
+                self.adapter.end_live_view()
+            except Exception as exc:
+                print(f"[SDK] end_live_view before set_ae_mode ignored: {exc}")
+            self._set_session_state(SessionState.READY, "stopped for ae_mode change")
+
         self.emit_backend_state(BackendState.UPDATING_CAMERA_PARAMS)
         try:
             self.adapter.set_ae_mode(ae_mode)
@@ -512,6 +521,12 @@ class FujifilmSdkBackend(CameraBackend):
             print(f"[SDK] set_ae_mode() failed: {exc}")
             raise
         finally:
+            if was_live and self._is_session_open() and not self._stopping:
+                try:
+                    self.adapter.begin_live_view()
+                    self._set_session_state(SessionState.LIVE, "live restored after ae_mode change")
+                except Exception as exc:
+                    print(f"[SDK] begin_live_view after set_ae_mode failed: {exc}")
             self._resume_runtime_activity(live_active=live_active, health_active=health_active)
             self._emit_backend_state_from_session()
 
@@ -551,7 +566,16 @@ class FujifilmSdkBackend(CameraBackend):
         if not self._is_session_open():
             raise RuntimeError("Camera not connected")
 
+        was_live = self.state is SessionState.LIVE
         live_active, health_active = self._pause_runtime_activity()
+
+        if was_live:
+            try:
+                self.adapter.end_live_view()
+            except Exception as exc:
+                print(f"[SDK] end_live_view before set_exposure ignored: {exc}")
+            self._set_session_state(SessionState.READY, "stopped for exposure change")
+
         self.emit_backend_state(BackendState.UPDATING_CAMERA_PARAMS)
         try:
             self.adapter.set_exposure(iso=iso, shutter=shutter, aperture=aperture)
@@ -559,6 +583,12 @@ class FujifilmSdkBackend(CameraBackend):
             print(f"[SDK] set_exposure() failed: {exc}")
             raise
         finally:
+            if was_live and self._is_session_open() and not self._stopping:
+                try:
+                    self.adapter.begin_live_view()
+                    self._set_session_state(SessionState.LIVE, "live restored after exposure change")
+                except Exception as exc:
+                    print(f"[SDK] begin_live_view after set_exposure failed: {exc}")
             self._resume_runtime_activity(live_active=live_active, health_active=health_active)
             self._emit_backend_state_from_session()
 
