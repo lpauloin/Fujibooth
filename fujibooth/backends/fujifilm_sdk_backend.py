@@ -494,6 +494,18 @@ class FujifilmSdkBackend(CameraBackend):
     # Exposure control
     # ------------------------------------------------------------
 
+    def get_ae_mode_options(self):
+        print(f"[SDK] get_ae_mode_options() state={self._state.name}")
+        return self.adapter.get_ae_mode_options()
+
+    def get_ae_mode(self):
+        print(f"[SDK] get_ae_mode() state={self._state.name}")
+        return self.adapter.get_ae_mode()
+
+    def set_ae_mode(self, ae_mode):
+        print(f"[SDK] set_ae_mode() state={self._state.name} ae_mode={ae_mode}")
+        self.adapter.set_ae_mode(ae_mode)
+
     def get_exposure_options(self):
         """
         Returns supported values per exposure parameter for the current camera mode.

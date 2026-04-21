@@ -23,7 +23,6 @@ from ..services.printer import PrintService
 from ..services.usb_monitor import USBMonitor, USBMonitorConfig
 from .widgets import GalleryWidget, LiveViewWidget
 
-
 FREEZE_SECONDS = 10
 RETURN_TO_LIVEVIEW_SECONDS = 5
 
@@ -49,7 +48,9 @@ _COMBO_STYLE = (
     "}"
 )
 
-_LABEL_STYLE = "color: #777777; font-size: 11px; font-weight: 700; letter-spacing: 1.5px;"
+_LABEL_STYLE = (
+    "color: #777777; font-size: 11px; font-weight: 700; letter-spacing: 1.5px;"
+)
 
 
 class MainWindow(QMainWindow):
@@ -115,7 +116,9 @@ class MainWindow(QMainWindow):
 
         self.print_button_timer = QTimer(self)
         self.print_button_timer.setSingleShot(True)
-        self.print_button_timer.timeout.connect(self.print_button.hide if hasattr(self, "print_button") else lambda: None)
+        self.print_button_timer.timeout.connect(
+            self.print_button.hide if hasattr(self, "print_button") else lambda: None
+        )
 
         self.return_timer = QTimer(self)
         self.return_timer.setSingleShot(True)
@@ -165,7 +168,9 @@ class MainWindow(QMainWindow):
         layout.setSpacing(16)
 
         self.live_view = LiveViewWidget()
-        self.live_view.set_status("Waiting for camera", self.settings.ui.status_disconnected_color)
+        self.live_view.set_status(
+            "Waiting for camera", self.settings.ui.status_disconnected_color
+        )
         layout.addWidget(self.live_view, stretch=1)
 
         # Exposure controls: labeled columns side-by-side
@@ -177,15 +182,35 @@ class MainWindow(QMainWindow):
         exposure_layout.setContentsMargins(16, 12, 16, 12)
         exposure_layout.setSpacing(16)
 
+        ae_mode_col, self.ae_mode_combo = self._make_exposure_column("MODE", "P")
         iso_col, self.iso_combo = self._make_exposure_column("ISO", "ISO AUTO")
         shutter_col, self.shutter_combo = self._make_exposure_column("SHUTTER", "AUTO")
-        aperture_col, self.aperture_combo = self._make_exposure_column("APERTURE", "AUTO")
+        aperture_col, self.aperture_combo = self._make_exposure_column(
+            "APERTURE", "AUTO"
+        )
+
+        self.apply_ae_mode_button = QPushButton("MODE")
+        self.apply_ae_mode_button.setMinimumHeight(42)
+        self.apply_ae_mode_button.setMinimumWidth(90)
+        self.apply_ae_mode_button.setStyleSheet("""
+            QPushButton {
+                background: #3b3b3b;
+                color: white;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: 800;
+                padding: 0 20px;
+                margin-top: 18px;
+            }
+            QPushButton:hover { background: #4a4a4a; }
+            QPushButton:pressed { background: #2e2e2e; }
+            QPushButton:disabled { background: #2a2a2a; color: #555555; }
+            """)
 
         self.apply_exposure_button = QPushButton("APPLY")
         self.apply_exposure_button.setMinimumHeight(42)
         self.apply_exposure_button.setMinimumWidth(100)
-        self.apply_exposure_button.setStyleSheet(
-            """
+        self.apply_exposure_button.setStyleSheet("""
             QPushButton {
                 background: #2f80ff;
                 color: white;
@@ -198,13 +223,14 @@ class MainWindow(QMainWindow):
             QPushButton:hover { background: #2467cf; }
             QPushButton:pressed { background: #1d53a7; }
             QPushButton:disabled { background: #2a2a2a; color: #555555; }
-            """
-        )
+            """)
 
+        exposure_layout.addWidget(ae_mode_col)
         exposure_layout.addWidget(iso_col)
         exposure_layout.addWidget(shutter_col)
         exposure_layout.addWidget(aperture_col)
         exposure_layout.addStretch(1)
+        exposure_layout.addWidget(self.apply_ae_mode_button, alignment=Qt.AlignBottom)
         exposure_layout.addWidget(self.apply_exposure_button, alignment=Qt.AlignBottom)
         layout.addWidget(self.exposure_bar)
 
@@ -217,8 +243,7 @@ class MainWindow(QMainWindow):
 
         self.print_button = QPushButton("PRINT")
         self.print_button.setFixedHeight(62)
-        self.print_button.setStyleSheet(
-            """
+        self.print_button.setStyleSheet("""
             QPushButton {
                 background: white;
                 color: black;
@@ -229,8 +254,7 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { background: #f0f0f0; }
             QPushButton:pressed { background: #dddddd; }
-            """
-        )
+            """)
         self.print_button.hide()
         layout.addWidget(self.print_button, alignment=Qt.AlignCenter)
 
@@ -259,6 +283,7 @@ class MainWindow(QMainWindow):
         self.live_view.clicked.connect(self.start_countdown)
         self.gallery.photo_selected.connect(self.on_photo_selected)
         self.print_button.clicked.connect(self.on_print_clicked)
+        self.apply_ae_mode_button.clicked.connect(self.on_apply_ae_mode_clicked)
         self.apply_exposure_button.clicked.connect(self.on_apply_exposure_clicked)
         self.print_button_timer.timeout.disconnect()
         self.print_button_timer.timeout.connect(self.print_button.hide)
@@ -278,7 +303,9 @@ class MainWindow(QMainWindow):
         if self._gallery_scrollbar is not None:
             self.gallery_slider.valueChanged.connect(self._gallery_scrollbar.setValue)
             self._gallery_scrollbar.valueChanged.connect(self.gallery_slider.setValue)
-            self._gallery_scrollbar.rangeChanged.connect(self._sync_gallery_slider_range)
+            self._gallery_scrollbar.rangeChanged.connect(
+                self._sync_gallery_slider_range
+            )
             self._sync_gallery_slider_range(
                 self._gallery_scrollbar.minimum(),
                 self._gallery_scrollbar.maximum(),
@@ -311,7 +338,11 @@ class MainWindow(QMainWindow):
             f"camera_connected={self._camera_connected} camera_label={self._camera_label}"
         )
         if visible:
-            text = f"{self._camera_label} connected" if self._camera_connected else "Waiting for camera"
+            text = (
+                f"{self._camera_label} connected"
+                if self._camera_connected
+                else "Waiting for camera"
+            )
             color = (
                 self.settings.ui.status_connected_color
                 if self._camera_connected
@@ -323,9 +354,11 @@ class MainWindow(QMainWindow):
 
     def _set_exposure_controls_enabled(self, enabled):
         print(f"[UI] _set_exposure_controls_enabled enabled={enabled}")
+        self.ae_mode_combo.setEnabled(enabled)
         self.iso_combo.setEnabled(enabled)
         self.shutter_combo.setEnabled(enabled)
         self.aperture_combo.setEnabled(enabled)
+        self.apply_ae_mode_button.setEnabled(enabled)
         self.apply_exposure_button.setEnabled(enabled)
 
     def _set_combo_by_value(self, combo, raw_value):
@@ -340,45 +373,162 @@ class MainWindow(QMainWindow):
 
     def _load_exposure_controls(self):
         print("[UI] _load_exposure_controls()")
-        try:
-            options = self.backend.get_exposure_options()
-            state = self.backend.get_exposure_state()
-        except Exception as exc:
-            print(f"[UI] _load_exposure_controls error: {exc}")
+
+        # Prevent overlapping refreshes when the camera is temporarily busy.
+        if getattr(self, "_loading_exposure_controls", False):
+            print("[UI] _load_exposure_controls skipped: already running")
             return
 
-        self.iso_combo.blockSignals(True)
-        self.shutter_combo.blockSignals(True)
-        self.aperture_combo.blockSignals(True)
+        self._loading_exposure_controls = True
 
-        self.iso_combo.clear()
-        self.shutter_combo.clear()
-        self.aperture_combo.clear()
+        try:
+            try:
+                options = self.backend.get_exposure_options()
+                state = self.backend.get_exposure_state()
+            except Exception as exc:
+                print(f"[UI] _load_exposure_controls error: {exc}")
 
-        # Populate with (display_label, raw_sdk_value) pairs
-        for label, raw in options.get("iso", []):
-            self.iso_combo.addItem(label, raw)
+                # Retry a limited number of times because the camera can be busy
+                # right after switching AE mode or restarting live view.
+                retry_count = getattr(self, "_exposure_controls_retry_count", 0) + 1
+                self._exposure_controls_retry_count = retry_count
+                print(f"[UI] _load_exposure_controls retry_count={retry_count}")
 
-        for label, raw in options.get("shutter", []):
-            self.shutter_combo.addItem(label, raw)
+                if retry_count <= 3:
+                    self.message_label.setText(
+                        "Camera is busy, refreshing exposure controls..."
+                    )
+                    QTimer.singleShot(600, self._load_exposure_controls)
+                else:
+                    print("[UI] _load_exposure_controls giving up after retries")
+                    self.message_label.setText("Failed to refresh exposure controls")
 
-        for label, raw in options.get("aperture", []):
-            self.aperture_combo.addItem(label, raw)
+                return
 
-        # Select the current camera values by matching raw SDK integers
-        self._set_combo_by_value(self.iso_combo, state.get("iso"))
-        self._set_combo_by_value(self.shutter_combo, state.get("shutter"))
-        self._set_combo_by_value(self.aperture_combo, state.get("aperture"))
+            # Reset retry counter on success.
+            self._exposure_controls_retry_count = 0
 
-        self.iso_combo.blockSignals(False)
-        self.shutter_combo.blockSignals(False)
-        self.aperture_combo.blockSignals(False)
+            self.ae_mode_combo.blockSignals(True)
+            self.iso_combo.blockSignals(True)
+            self.shutter_combo.blockSignals(True)
+            self.aperture_combo.blockSignals(True)
 
-        print(
-            f"[UI] _load_exposure_controls done "
-            f"iso={self.iso_combo.count()} shutter={self.shutter_combo.count()} "
-            f"aperture={self.aperture_combo.count()}"
-        )
+            try:
+                self.ae_mode_combo.clear()
+                self.iso_combo.clear()
+                self.shutter_combo.clear()
+                self.aperture_combo.clear()
+
+                # Populate with (display_label, raw_sdk_value) pairs.
+                for label, raw in options.get("ae_mode", []):
+                    self.ae_mode_combo.addItem(label, raw)
+
+                for label, raw in options.get("iso", []):
+                    self.iso_combo.addItem(label, raw)
+
+                for label, raw in options.get("shutter", []):
+                    self.shutter_combo.addItem(label, raw)
+
+                for label, raw in options.get("aperture", []):
+                    self.aperture_combo.addItem(label, raw)
+
+                # Select the current camera values by matching raw SDK integers.
+                self._set_combo_by_value(self.ae_mode_combo, state.get("ae_mode"))
+                self._set_combo_by_value(self.iso_combo, state.get("iso"))
+                self._set_combo_by_value(self.shutter_combo, state.get("shutter"))
+                self._set_combo_by_value(self.aperture_combo, state.get("aperture"))
+
+            finally:
+                self.ae_mode_combo.blockSignals(False)
+                self.iso_combo.blockSignals(False)
+                self.shutter_combo.blockSignals(False)
+                self.aperture_combo.blockSignals(False)
+
+            ae_mode = state.get("ae_mode")
+            shutter_available = self.shutter_combo.count() > 0
+            aperture_available = self.aperture_combo.count() > 0
+
+            print(
+                f"[UI] exposure UX sync ae_mode={ae_mode} "
+                f"shutter_available={shutter_available} "
+                f"aperture_available={aperture_available}"
+            )
+
+            # Keep ISO and AE mode available whenever the camera is connected.
+            self.iso_combo.setEnabled(self._camera_connected)
+            self.ae_mode_combo.setEnabled(self._camera_connected)
+
+            # Match combo availability to the current PASM mode.
+            # Fujifilm AE mode values:
+            #   1 = M
+            #   3 = A
+            #   4 = S
+            #   6 = P
+            if ae_mode == 3:  # A
+                self.shutter_combo.setEnabled(False)
+                self.aperture_combo.setEnabled(
+                    self._camera_connected and aperture_available
+                )
+            elif ae_mode == 4:  # S
+                self.shutter_combo.setEnabled(
+                    self._camera_connected and shutter_available
+                )
+                self.aperture_combo.setEnabled(False)
+            elif ae_mode == 1:  # M
+                self.shutter_combo.setEnabled(
+                    self._camera_connected and shutter_available
+                )
+                self.aperture_combo.setEnabled(
+                    self._camera_connected and aperture_available
+                )
+            else:  # P or fallback
+                self.shutter_combo.setEnabled(False)
+                self.aperture_combo.setEnabled(False)
+
+            if self.shutter_combo.count() == 0:
+                self.shutter_combo.setPlaceholderText("Auto in current mode")
+
+            if self.aperture_combo.count() == 0:
+                self.aperture_combo.setPlaceholderText("Auto in current mode")
+
+            print(
+                f"[UI] _load_exposure_controls done "
+                f"ae_mode_count={self.ae_mode_combo.count()} "
+                f"iso_count={self.iso_combo.count()} "
+                f"shutter_count={self.shutter_combo.count()} "
+                f"aperture_count={self.aperture_combo.count()} "
+                f"state={state}"
+            )
+
+            if self._camera_connected:
+                if ae_mode == 3:
+                    self.message_label.setText(
+                        "A mode: aperture controlled, shutter automatic"
+                    )
+                elif ae_mode == 4:
+                    self.message_label.setText(
+                        "S mode: shutter controlled, aperture automatic"
+                    )
+                elif ae_mode == 1:
+                    self.message_label.setText(
+                        "M mode: shutter and aperture controlled"
+                    )
+                elif ae_mode == 6:
+                    self.message_label.setText("P mode: shutter and aperture automatic")
+                elif not shutter_available and not aperture_available:
+                    self.message_label.setText(
+                        "Current mode does not allow shutter or aperture control"
+                    )
+                elif not shutter_available:
+                    self.message_label.setText(
+                        "Current mode does not allow shutter control"
+                    )
+                elif not aperture_available:
+                    self.message_label.setText(
+                        "Current mode does not allow aperture control"
+                    )
+        finally:
+            self._loading_exposure_controls = False
 
     def _apply_idle_ui(self):
         print("[UI] _apply_idle_ui()")
@@ -475,7 +625,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def start_countdown(self):
-        print(f"[UI] start_countdown() state={self.state} camera_connected={self._camera_connected}")
+        print(
+            f"[UI] start_countdown() state={self.state} camera_connected={self._camera_connected}"
+        )
 
         if self.state not in {
             BoothState.LIVE_VIEW,
@@ -530,6 +682,25 @@ class MainWindow(QMainWindow):
             self.message_label.setText(str(exc))
 
     @Slot()
+    def on_apply_ae_mode_clicked(self):
+        print("[UI] on_apply_ae_mode_clicked()")
+        if not self._camera_connected:
+            self.message_label.setText("Waiting for FUJIFILM camera")
+            return
+
+        ae_mode = self.ae_mode_combo.currentData()
+        print(f"[UI] applying AE mode ae_mode={ae_mode}")
+
+        try:
+            self.backend.set_ae_mode(ae_mode)
+            self._load_exposure_controls()
+            self.message_label.setText("Exposure mode applied")
+        except Exception as exc:
+            print(f"[UI] on_apply_ae_mode_clicked error: {exc}")
+            self.message_label.setText(str(exc))
+
+    @Slot()
+    @Slot()
     def on_apply_exposure_clicked(self):
         print("[UI] on_apply_exposure_clicked()")
         if not self._camera_connected:
@@ -538,15 +709,21 @@ class MainWindow(QMainWindow):
 
         # currentData() returns the raw SDK integer stored via addItem(label, raw)
         iso = self.iso_combo.currentData()
-        shutter = self.shutter_combo.currentData()
-        aperture = self.aperture_combo.currentData()
+        shutter = (
+            self.shutter_combo.currentData() if self.shutter_combo.count() > 0 else None
+        )
+        aperture = (
+            self.aperture_combo.currentData()
+            if self.aperture_combo.count() > 0
+            else None
+        )
 
         print(f"[UI] applying exposure iso={iso} shutter={shutter} aperture={aperture}")
 
         try:
             self.backend.set_exposure(iso=iso, shutter=shutter, aperture=aperture)
-            self._load_exposure_controls()
             self.message_label.setText("Exposure settings applied")
+            QTimer.singleShot(500, self._load_exposure_controls)
         except Exception as exc:
             print(f"[UI] on_apply_exposure_clicked error: {exc}")
             self.message_label.setText(str(exc))
@@ -669,17 +846,23 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def on_backend_state_changed(self, state):
-        print(f"[UI] on_backend_state_changed raw={state} current_ui_state={self.state}")
+        print(
+            f"[UI] on_backend_state_changed raw={state} current_ui_state={self.state}"
+        )
         if not isinstance(state, BackendState):
             print("[UI] on_backend_state_changed ignored: not BackendState")
             return
 
-        if self.state in {
-            BoothState.COUNTDOWN,
-            BoothState.FREEZE,
-            BoothState.PHOTO_SELECTED,
-            BoothState.PRINTING,
-        } and state is not BackendState.WAITING_FOR_CAMERA:
+        if (
+            self.state
+            in {
+                BoothState.COUNTDOWN,
+                BoothState.FREEZE,
+                BoothState.PHOTO_SELECTED,
+                BoothState.PRINTING,
+            }
+            and state is not BackendState.WAITING_FOR_CAMERA
+        ):
             print("[UI] on_backend_state_changed ignored: strong local UI state")
             return
 
@@ -724,7 +907,9 @@ class MainWindow(QMainWindow):
     def _on_backend_camera_connected(self, payload):
         print(f"[UI] _on_backend_camera_connected payload={payload}")
         self._camera_connected = True
-        self._camera_label = payload.get("label", "FUJIFILM").replace(" connected", "").strip()
+        self._camera_label = (
+            payload.get("label", "FUJIFILM").replace(" connected", "").strip()
+        )
         self._show_camera_badge(True)
         self._set_exposure_controls_enabled(True)
         self._load_exposure_controls()
@@ -736,6 +921,7 @@ class MainWindow(QMainWindow):
         self._camera_connected = False
         self._camera_label = "FUJIFILM"
         self._set_exposure_controls_enabled(False)
+        self.ae_mode_combo.clear()
         self.iso_combo.clear()
         self.shutter_combo.clear()
         self.aperture_combo.clear()

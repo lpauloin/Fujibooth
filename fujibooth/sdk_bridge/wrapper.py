@@ -654,6 +654,90 @@ class FujifilmSdkAdapter:
             return path, err
 
     # ------------------------------------------------------------------
+    # PASM
+    # ------------------------------------------------------------------
+    def get_ae_mode_options(self):
+        lib, handle = self.ensure_session()
+
+        print("[SDK-WRAPPER] get_ae_mode_options()")
+
+        supported = lib.cap_ae_mode(handle)
+        result = [(self._format_ae_mode_label(v), v) for v in supported]
+
+        print(f"[SDK-WRAPPER] get_ae_mode_options -> {result}")
+        return result
+
+    def get_ae_mode(self):
+        lib, handle = self.ensure_session()
+
+        print("[SDK-WRAPPER] get_ae_mode()")
+        value = lib.get_ae_mode(handle)
+        print(
+            f"[SDK-WRAPPER] get_ae_mode -> value={value} "
+            f"label={self._format_ae_mode_label(value)}"
+        )
+        return value
+
+    def set_ae_mode(self, ae_mode):
+        lib, handle = self.ensure_session()
+
+        print(
+            f"[SDK-WRAPPER] set_ae_mode requested value={ae_mode} "
+            f"label={self._format_ae_mode_label(ae_mode)}"
+        )
+
+        with self._sdk_lock:
+            was_live = self._live_view_enabled
+            print(f"[SDK-WRAPPER] set_ae_mode live_view_before={was_live}")
+
+            if was_live:
+                try:
+                    print("[SDK-WRAPPER] stopping live view before AE mode change")
+                    lib.stop_live_view(handle)
+                    self._live_view_enabled = False
+                    time.sleep(0.3)
+                except Exception as exc:
+                    print(
+                        f"[SDK-WRAPPER] stop_live_view before set_ae_mode ignored: {exc}"
+                    )
+
+            print("[SDK-WRAPPER] forcing PC priority before AE mode change")
+            lib.set_priority_mode(handle, XSDK_PRIORITY_PC)
+            time.sleep(0.2)
+
+            supported = lib.cap_ae_mode(handle)
+            print(f"[SDK-WRAPPER] set_ae_mode supported={supported}")
+
+            if ae_mode not in supported:
+                raise RuntimeError(
+                    f"AE mode {ae_mode} ({self._format_ae_mode_label(ae_mode)}) "
+                    f"not supported in current camera state: {supported}"
+                )
+
+            current = lib.get_ae_mode(handle)
+            print(
+                f"[SDK-WRAPPER] set_ae_mode current={current} "
+                f"({self._format_ae_mode_label(current)})"
+            )
+
+            if current != ae_mode:
+                lib.set_ae_mode(handle, ae_mode)
+                time.sleep(0.3)
+
+            current_after = lib.get_ae_mode(handle)
+            print(
+                f"[SDK-WRAPPER] set_ae_mode after={current_after} "
+                f"({self._format_ae_mode_label(current_after)})"
+            )
+
+            if was_live:
+                time.sleep(0.3)
+                print("[SDK-WRAPPER] restarting live view after AE mode change")
+                lib.start_live_view(handle)
+                self._live_view_enabled = True
+                print("[SDK-WRAPPER] live view restored after AE mode change")
+
+    # ------------------------------------------------------------------
     # Exposure
     # ------------------------------------------------------------------
 
@@ -722,12 +806,14 @@ class FujifilmSdkAdapter:
         aperture_values = lib.cap_aperture(handle, zoom_pos)
 
         result = {
+            "ae_mode": self.get_ae_mode_options(),
             "iso": [(format_iso(v), v) for v in iso_values],
             "shutter": [(format_shutter(v), v) for v in shutter_values],
             "aperture": [(format_aperture(v), v) for v in aperture_values],
         }
 
         self._cached_exposure_options = {
+            "ae_mode": list(result["ae_mode"]),
             "iso": list(result["iso"]),
             "shutter": list(result["shutter"]),
             "aperture": list(result["aperture"]),
@@ -756,8 +842,10 @@ class FujifilmSdkAdapter:
         iso_value = lib.get_sensitivity(handle)
         shutter_value, shutter_bulb = lib.get_shutter_speed(handle)
         aperture_value = lib.get_aperture(handle)
+        ae_mode_value = lib.get_ae_mode(handle)
 
         state = {
+            "ae_mode": ae_mode_value,
             "iso": iso_value,
             "shutter": shutter_value,
             "aperture": aperture_value,
