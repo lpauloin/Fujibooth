@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
 
 from ..backends.fujifilm_sdk_backend import FujifilmSdkBackend
 from ..backends.state import BackendState
-from ..config import Settings
 from ..models.state import BoothState
 from ..services.photo_repository import PhotoRepository
 from ..services.printer import PrintService
