@@ -540,17 +540,29 @@ class FujifilmSdkBackend(CameraBackend):
         print(f"[SDK] get_exposure_options() state={self.state.name}")
         if not self._is_session_open():
             raise RuntimeError("Camera SDK session not open")
-        # The macOS SDK processes Core Foundation events during ctypes calls,
-        # allowing the live timer to fire re-entrantly and corrupt the SDK state.
-        # Pause the live timer for the duration of the query.
-        live_active = self.live_timer.isActive()
-        if live_active:
-            self.live_timer.stop()
+        # XSDK_CapAperture fails with device-busy when the live view stream is
+        # active.  Stop the SDK live view for the duration of the query, then
+        # restart it — the same pattern used by set_exposure / set_ae_mode.
+        was_live = self.state is SessionState.LIVE
+        live_active, health_active = self._pause_runtime_activity()
+
+        if was_live:
+            try:
+                self.adapter.end_live_view()
+            except Exception as exc:
+                print(f"[SDK] end_live_view before get_exposure_options ignored: {exc}")
+            self._set_session_state(SessionState.READY, "stopped for exposure options query")
+
         try:
             return self.adapter.get_exposure_options()
         finally:
-            if live_active and self.state is SessionState.LIVE:
-                self.live_timer.start()
+            if was_live and self._is_session_open() and not self._stopping:
+                try:
+                    self.adapter.begin_live_view()
+                    self._set_session_state(SessionState.LIVE, "live restored after exposure options query")
+                except Exception as exc:
+                    print(f"[SDK] begin_live_view after get_exposure_options failed: {exc}")
+            self._resume_runtime_activity(live_active=live_active, health_active=health_active)
 
     def get_exposure_state(self):
         """
