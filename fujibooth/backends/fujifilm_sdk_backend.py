@@ -504,7 +504,16 @@ class FujifilmSdkBackend(CameraBackend):
 
     def set_ae_mode(self, ae_mode):
         print(f"[SDK] set_ae_mode() state={self._state.name} ae_mode={ae_mode}")
-        self.adapter.set_ae_mode(ae_mode)
+        live_active, health_active = self._pause_runtime_activity()
+        self.emit_backend_state(BackendState.UPDATING_CAMERA_PARAMS)
+        try:
+            self.adapter.set_ae_mode(ae_mode)
+        except Exception as exc:
+            print(f"[SDK] set_ae_mode() failed: {exc}")
+            raise
+        finally:
+            self._resume_runtime_activity(live_active=live_active, health_active=health_active)
+            self._emit_backend_state_from_session()
 
     def get_exposure_options(self):
         """
@@ -542,25 +551,16 @@ class FujifilmSdkBackend(CameraBackend):
         if not self._is_session_open():
             raise RuntimeError("Camera not connected")
 
-        live_active = self.live_timer.isActive()
-        health_active = self.health_timer.isActive()
-
-        if live_active:
-            self.live_timer.stop()
-        if health_active:
-            self.health_timer.stop()
-
+        live_active, health_active = self._pause_runtime_activity()
+        self.emit_backend_state(BackendState.UPDATING_CAMERA_PARAMS)
         try:
             self.adapter.set_exposure(iso=iso, shutter=shutter, aperture=aperture)
         except Exception as exc:
             print(f"[SDK] set_exposure() failed: {exc}")
             raise
         finally:
-            if self._is_session_open():
-                if health_active:
-                    self.health_timer.start()
-                if live_active:
-                    self.live_timer.start()
+            self._resume_runtime_activity(live_active=live_active, health_active=health_active)
+            self._emit_backend_state_from_session()
 
     # ------------------------------------------------------------
     # Error handling

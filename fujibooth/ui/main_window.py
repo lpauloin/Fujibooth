@@ -694,12 +694,12 @@ class MainWindow(QMainWindow):
         try:
             self.backend.set_ae_mode(ae_mode)
             self._load_exposure_controls()
-            self.message_label.setText("Exposure mode applied")
+            self.message_label.setText("AE mode applied")
         except Exception as exc:
             print(f"[UI] on_apply_ae_mode_clicked error: {exc}")
+            self._set_exposure_controls_enabled(self._camera_connected)
             self.message_label.setText(str(exc))
 
-    @Slot()
     @Slot()
     def on_apply_exposure_clicked(self):
         print("[UI] on_apply_exposure_clicked()")
@@ -722,10 +722,11 @@ class MainWindow(QMainWindow):
 
         try:
             self.backend.set_exposure(iso=iso, shutter=shutter, aperture=aperture)
+            self._load_exposure_controls()
             self.message_label.setText("Exposure settings applied")
-            QTimer.singleShot(500, self._load_exposure_controls)
         except Exception as exc:
             print(f"[UI] on_apply_exposure_clicked error: {exc}")
+            self._set_exposure_controls_enabled(self._camera_connected)
             self.message_label.setText(str(exc))
 
     @Slot(QPixmap)
@@ -870,11 +871,19 @@ class MainWindow(QMainWindow):
             self._set_state(BoothState.LIVE_VIEW)
             self._apply_idle_ui()
             self.message_label.setText("Tap the image to start the photobooth")
+            if self._camera_connected:
+                self._set_exposure_controls_enabled(True)
 
         elif state is BackendState.LIVE_VIEW:
             self._set_state(BoothState.LIVE_VIEW)
             self._apply_idle_ui()
             self.message_label.setText("Tap the image to start the photobooth")
+            if self._camera_connected:
+                self._set_exposure_controls_enabled(True)
+
+        elif state is BackendState.UPDATING_CAMERA_PARAMS:
+            self._set_exposure_controls_enabled(False)
+            self.message_label.setText("Updating camera settings...")
 
         elif state is BackendState.WAITING_FOR_CAMERA:
             self._set_state(BoothState.WAITING_FOR_CAMERA)
