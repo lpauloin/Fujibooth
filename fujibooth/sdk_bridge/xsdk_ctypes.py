@@ -19,7 +19,6 @@ from ctypes import (
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Minimal subset of the Fujifilm SDK needed by the photobooth.
 # This wrapper is intentionally conservative and verbose for debugging.
@@ -32,6 +31,12 @@ XSDK_DSC_IF_USB = 0x00000001
 
 XSDK_PRIORITY_CAMERA = 0x0001
 XSDK_PRIORITY_PC = 0x0002
+
+# AE modes
+XSDK_AE_MANUAL = 0x0001
+XSDK_AE_APERTURE_PRIORITY = 0x0003
+XSDK_AE_SHUTTER_PRIORITY = 0x0004
+XSDK_AE_PROGRAM = 0x0006
 
 # ReleaseEx modes
 XSDK_RELEASE_EX_S1_ON = 0x00010000
@@ -352,7 +357,10 @@ class FujiSdkLibrary:
         self.XSDK_GetErrorDetails.argtypes = [c_longlong, ctypes.POINTER(c_long)]
         self.XSDK_GetErrorDetails.restype = c_long
 
-        self.XSDK_GetDeviceInfo.argtypes = [c_longlong, ctypes.POINTER(DeviceInformation)]
+        self.XSDK_GetDeviceInfo.argtypes = [
+            c_longlong,
+            ctypes.POINTER(DeviceInformation),
+        ]
         self.XSDK_GetDeviceInfo.restype = c_long
 
         self.XSDK_SetPriorityMode.argtypes = [c_longlong, c_long]
@@ -373,7 +381,11 @@ class FujiSdkLibrary:
         self.XSDK_SetForceMode.argtypes = [c_longlong, c_long]
         self.XSDK_SetForceMode.restype = c_long
 
-        self.XSDK_CapAEMode.argtypes = [c_longlong, ctypes.POINTER(c_long), ctypes.POINTER(c_long)]
+        self.XSDK_CapAEMode.argtypes = [
+            c_longlong,
+            ctypes.POINTER(c_long),
+            ctypes.POINTER(c_long),
+        ]
         self.XSDK_CapAEMode.restype = c_long
 
         self.XSDK_SetAEMode.argtypes = [c_longlong, c_long]
@@ -400,7 +412,11 @@ class FujiSdkLibrary:
         ]
         self.XSDK_GetShutterSpeed.restype = c_long
 
-        self.XSDK_CapSensitivity.argtypes = [c_longlong, ctypes.POINTER(c_long), ctypes.POINTER(c_long)]
+        self.XSDK_CapSensitivity.argtypes = [
+            c_longlong,
+            ctypes.POINTER(c_long),
+            ctypes.POINTER(c_long),
+        ]
         self.XSDK_CapSensitivity.restype = c_long
 
         self.XSDK_SetSensitivity.argtypes = [c_longlong, c_long]
@@ -467,7 +483,10 @@ class FujiSdkLibrary:
         self.XSDK_GetReleaseStatus.argtypes = [c_longlong, ctypes.POINTER(c_long)]
         self.XSDK_GetReleaseStatus.restype = c_long
 
-        self.XSDK_ReadImageInfo.argtypes = [c_longlong, ctypes.POINTER(ImageInformation)]
+        self.XSDK_ReadImageInfo.argtypes = [
+            c_longlong,
+            ctypes.POINTER(ImageInformation),
+        ]
         self.XSDK_ReadImageInfo.restype = c_long
 
         self.XSDK_ReadPreview.argtypes = [c_longlong, c_void_p, c_ulong]
@@ -560,12 +579,18 @@ class FujiSdkLibrary:
             device = b"ENUM:0"
 
             print(f"[XSDK] XSDK_OpenEx device={device!r}")
-            print(f"[XSDK] before open handle={camera_handle.value} mode={camera_mode.value}")
+            print(
+                f"[XSDK] before open handle={camera_handle.value} mode={camera_mode.value}"
+            )
 
-            result = self.XSDK_OpenEx(device, byref(camera_handle), byref(camera_mode), None)
+            result = self.XSDK_OpenEx(
+                device, byref(camera_handle), byref(camera_mode), None
+            )
             self._check(result, "XSDK_OpenEx")
 
-            print(f"[XSDK] after open handle={camera_handle.value} mode={camera_mode.value}")
+            print(
+                f"[XSDK] after open handle={camera_handle.value} mode={camera_mode.value}"
+            )
 
             info = self.get_device_info(camera_handle)
             return camera_handle, info
@@ -588,12 +613,27 @@ class FujiSdkLibrary:
             result = self.XSDK_GetDeviceInfo(camera_handle, byref(info))
             self._check(result, "XSDK_GetDeviceInfo", camera_handle)
 
-            model_str = info.strProduct.decode("utf-8", errors="ignore").strip("\x00 ").strip() or "FUJIFILM"
-            serial_str = info.strSerialNo.decode("utf-8", errors="ignore").strip("\x00 ").strip() or "UNKNOWN"
-            device_name = info.strDeviceName.decode("utf-8", errors="ignore").strip("\x00 ").strip() or "ENUM:0"
+            model_str = (
+                info.strProduct.decode("utf-8", errors="ignore").strip("\x00 ").strip()
+                or "FUJIFILM"
+            )
+            serial_str = (
+                info.strSerialNo.decode("utf-8", errors="ignore").strip("\x00 ").strip()
+                or "UNKNOWN"
+            )
+            device_name = (
+                info.strDeviceName.decode("utf-8", errors="ignore")
+                .strip("\x00 ")
+                .strip()
+                or "ENUM:0"
+            )
 
-            print(f"[XSDK] device_info model={model_str} serial={serial_str} device_name={device_name}")
-            return RawCameraInfo(model=model_str, serial=serial_str, device_name=device_name)
+            print(
+                f"[XSDK] device_info model={model_str} serial={serial_str} device_name={device_name}"
+            )
+            return RawCameraInfo(
+                model=model_str, serial=serial_str, device_name=device_name
+            )
 
     # ------------------------------------------------------------------
     # Priority and camera settings
@@ -602,7 +642,9 @@ class FujiSdkLibrary:
     def set_priority_mode(self, camera_handle, mode=XSDK_PRIORITY_CAMERA):
         with self._lock:
             label = "PC" if mode == XSDK_PRIORITY_PC else "CAMERA"
-            print(f"[XSDK] XSDK_SetPriorityMode handle={camera_handle.value} mode={mode} ({label})")
+            print(
+                f"[XSDK] XSDK_SetPriorityMode handle={camera_handle.value} mode={mode} ({label})"
+            )
             result = self.XSDK_SetPriorityMode(camera_handle, mode)
             self._check(result, "XSDK_SetPriorityMode", camera_handle)
             self.current_priority_mode = mode
@@ -630,7 +672,9 @@ class FujiSdkLibrary:
 
     def set_media_record(self, camera_handle, mode=XSDK_MEDIAREC_JPEG):
         with self._lock:
-            print(f"[XSDK] XSDK_SetMediaRecord handle={camera_handle.value} mode={mode}")
+            print(
+                f"[XSDK] XSDK_SetMediaRecord handle={camera_handle.value} mode={mode}"
+            )
             result = self.XSDK_SetMediaRecord(camera_handle, mode)
             self._check(result, "XSDK_SetMediaRecord", camera_handle)
 
@@ -679,24 +723,38 @@ class FujiSdkLibrary:
         with self._lock:
             num = c_long(0)
             bulb = c_long(0)
-            print(f"[XSDK] XSDK_CapShutterSpeed handle={camera_handle.value} query count")
-            result = self.XSDK_CapShutterSpeed(camera_handle, byref(num), None, byref(bulb))
+            print(
+                f"[XSDK] XSDK_CapShutterSpeed handle={camera_handle.value} query count"
+            )
+            result = self.XSDK_CapShutterSpeed(
+                camera_handle, byref(num), None, byref(bulb)
+            )
             self._check(result, "XSDK_CapShutterSpeed(count)", camera_handle)
             if num.value <= 0:
                 return [], bool(bulb.value)
             arr_type = c_long * num.value
             arr = arr_type()
-            print(f"[XSDK] XSDK_CapShutterSpeed handle={camera_handle.value} query list")
-            result = self.XSDK_CapShutterSpeed(camera_handle, byref(num), arr, byref(bulb))
+            print(
+                f"[XSDK] XSDK_CapShutterSpeed handle={camera_handle.value} query list"
+            )
+            result = self.XSDK_CapShutterSpeed(
+                camera_handle, byref(num), arr, byref(bulb)
+            )
             self._check(result, "XSDK_CapShutterSpeed(list)", camera_handle)
             supported = [int(arr[i]) for i in range(num.value)]
-            print(f"[XSDK] XSDK_CapShutterSpeed supported={supported} bulb={bulb.value}")
+            print(
+                f"[XSDK] XSDK_CapShutterSpeed supported={supported} bulb={bulb.value}"
+            )
             return supported, bool(bulb.value)
 
     def set_shutter_speed(self, camera_handle, shutter_speed, bulb=False):
         with self._lock:
-            print(f"[XSDK] XSDK_SetShutterSpeed handle={camera_handle.value} value={shutter_speed} bulb={bulb}")
-            result = self.XSDK_SetShutterSpeed(camera_handle, shutter_speed, 1 if bulb else 0)
+            print(
+                f"[XSDK] XSDK_SetShutterSpeed handle={camera_handle.value} value={shutter_speed} bulb={bulb}"
+            )
+            result = self.XSDK_SetShutterSpeed(
+                camera_handle, shutter_speed, 1 if bulb else 0
+            )
             self._check(result, "XSDK_SetShutterSpeed", camera_handle)
 
     def get_shutter_speed(self, camera_handle):
@@ -704,15 +762,21 @@ class FujiSdkLibrary:
             shutter_speed = c_long(0)
             bulb = c_long(0)
             print(f"[XSDK] XSDK_GetShutterSpeed handle={camera_handle.value}")
-            result = self.XSDK_GetShutterSpeed(camera_handle, byref(shutter_speed), byref(bulb))
+            result = self.XSDK_GetShutterSpeed(
+                camera_handle, byref(shutter_speed), byref(bulb)
+            )
             self._check(result, "XSDK_GetShutterSpeed", camera_handle)
-            print(f"[XSDK] XSDK_GetShutterSpeed -> value={shutter_speed.value} bulb={bulb.value}")
+            print(
+                f"[XSDK] XSDK_GetShutterSpeed -> value={shutter_speed.value} bulb={bulb.value}"
+            )
             return int(shutter_speed.value), bool(bulb.value)
 
     def cap_sensitivity(self, camera_handle):
         with self._lock:
             num = c_long(0)
-            print(f"[XSDK] XSDK_CapSensitivity handle={camera_handle.value} query count")
+            print(
+                f"[XSDK] XSDK_CapSensitivity handle={camera_handle.value} query count"
+            )
             result = self.XSDK_CapSensitivity(camera_handle, byref(num), None)
             self._check(result, "XSDK_CapSensitivity(count)", camera_handle)
             if num.value <= 0:
@@ -728,7 +792,9 @@ class FujiSdkLibrary:
 
     def set_sensitivity(self, camera_handle, sensitivity):
         with self._lock:
-            print(f"[XSDK] XSDK_SetSensitivity handle={camera_handle.value} value={sensitivity}")
+            print(
+                f"[XSDK] XSDK_SetSensitivity handle={camera_handle.value} value={sensitivity}"
+            )
             result = self.XSDK_SetSensitivity(camera_handle, sensitivity)
             self._check(result, "XSDK_SetSensitivity", camera_handle)
 
@@ -757,7 +823,9 @@ class FujiSdkLibrary:
                 return []
 
             num = c_long(0)
-            print(f"[XSDK] XSDK_CapLensZoomPos handle={camera_handle.value} query count")
+            print(
+                f"[XSDK] XSDK_CapLensZoomPos handle={camera_handle.value} query count"
+            )
             result = self.XSDK_CapLensZoomPos(camera_handle, byref(num), None)
             self._check(result, "XSDK_CapLensZoomPos(count)", camera_handle)
 
@@ -787,7 +855,9 @@ class FujiSdkLibrary:
             positions = self.cap_lens_zoom_pos(camera_handle)
             if positions:
                 zoom_pos = int(positions[0])
-                print(f"[XSDK] get_current_zoom_pos -> fallback CapLensZoomPos={zoom_pos}")
+                print(
+                    f"[XSDK] get_current_zoom_pos -> fallback CapLensZoomPos={zoom_pos}"
+                )
                 return zoom_pos
         except Exception as exc:
             print(f"[XSDK] get_current_zoom_pos CapLensZoomPos failed: {exc}")
@@ -798,14 +868,18 @@ class FujiSdkLibrary:
     def cap_aperture(self, camera_handle, zoom_pos):
         with self._lock:
             num = c_long(0)
-            print(f"[XSDK] XSDK_CapAperture handle={camera_handle.value} zoom_pos={zoom_pos} query count")
+            print(
+                f"[XSDK] XSDK_CapAperture handle={camera_handle.value} zoom_pos={zoom_pos} query count"
+            )
             result = self.XSDK_CapAperture(camera_handle, zoom_pos, byref(num), None)
             self._check(result, "XSDK_CapAperture(count)", camera_handle)
             if num.value <= 0:
                 return []
             arr_type = c_long * num.value
             arr = arr_type()
-            print(f"[XSDK] XSDK_CapAperture handle={camera_handle.value} zoom_pos={zoom_pos} query list")
+            print(
+                f"[XSDK] XSDK_CapAperture handle={camera_handle.value} zoom_pos={zoom_pos} query list"
+            )
             result = self.XSDK_CapAperture(camera_handle, zoom_pos, byref(num), arr)
             self._check(result, "XSDK_CapAperture(list)", camera_handle)
             supported = [int(arr[i]) for i in range(num.value)]
@@ -814,7 +888,9 @@ class FujiSdkLibrary:
 
     def set_aperture(self, camera_handle, f_number_x100):
         with self._lock:
-            print(f"[XSDK] XSDK_SetAperture handle={camera_handle.value} value={f_number_x100}")
+            print(
+                f"[XSDK] XSDK_SetAperture handle={camera_handle.value} value={f_number_x100}"
+            )
             result = self.XSDK_SetAperture(camera_handle, f_number_x100)
             self._check(result, "XSDK_SetAperture", camera_handle)
 
@@ -921,7 +997,9 @@ class FujiSdkLibrary:
         shot_option = c_long(0)
         af_status = c_long(0)
 
-        print(f"[XSDK] XSDK_Release handle={camera_handle.value} mode={release_mode} ({label})")
+        print(
+            f"[XSDK] XSDK_Release handle={camera_handle.value} mode={release_mode} ({label})"
+        )
         result = self.XSDK_Release(
             camera_handle,
             release_mode,
@@ -1235,7 +1313,14 @@ class FujiSdkLibrary:
     # Live view
     # ------------------------------------------------------------------
 
-    def start_live_view(self, camera_handle, *, quality=SDK_LIVEVIEW_QUALITY_FINE, size=SDK_LIVEVIEW_SIZE_L, mode=SDK_LIVEVIEW_MODE1):
+    def start_live_view(
+        self,
+        camera_handle,
+        *,
+        quality=SDK_LIVEVIEW_QUALITY_FINE,
+        size=SDK_LIVEVIEW_SIZE_L,
+        mode=SDK_LIVEVIEW_MODE1,
+    ):
         with self._lock:
             print(f"[XSDK] start_live_view quality={quality} size={size} mode={mode}")
 
@@ -1249,7 +1334,9 @@ class FujiSdkLibrary:
             props_ok = True
 
             try:
-                self.set_prop(camera_handle, API_CODE_SET_LIVE_VIEW_IMAGE_QUALITY, 1, quality)
+                self.set_prop(
+                    camera_handle, API_CODE_SET_LIVE_VIEW_IMAGE_QUALITY, 1, quality
+                )
             except XsdkRuntimeError as exc:
                 props_ok = False
                 print(f"[XSDK] warning: live view quality not applied: {exc}")
@@ -1267,7 +1354,9 @@ class FujiSdkLibrary:
                 print(f"[XSDK] warning: live view mode not applied: {exc}")
 
             if not props_ok:
-                print("[XSDK] some live view props failed, attempting StartLiveView anyway")
+                print(
+                    "[XSDK] some live view props failed, attempting StartLiveView anyway"
+                )
 
             self.set_prop(camera_handle, API_CODE_START_LIVE_VIEW, 0)
             self.live_view_running = True
@@ -1465,7 +1554,9 @@ class FujiSdkLibrary:
             print(f"[XSDK-PRECHECK] cap_release={report.cap_release}")
             print(f"[XSDK-PRECHECK] cap_release_ex={report.cap_release_ex}")
             for issue in report.issues:
-                print(f"[XSDK-PRECHECK] issue {issue.level} {issue.code}: {issue.message}")
+                print(
+                    f"[XSDK-PRECHECK] issue {issue.level} {issue.code}: {issue.message}"
+                )
 
             return report
 

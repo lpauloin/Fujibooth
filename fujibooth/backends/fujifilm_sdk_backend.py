@@ -21,7 +21,9 @@ class SessionState(Enum):
 
 
 class FujifilmSdkBackend(CameraBackend):
-    def __init__(self, settings, *, adapter=None, capture_dir=None, live_view_interval_ms=None):
+    def __init__(
+        self, settings, *, adapter=None, capture_dir=None, live_view_interval_ms=None
+    ):
         super().__init__()
         self.settings = settings
 
@@ -68,7 +70,9 @@ class FujifilmSdkBackend(CameraBackend):
 
     def _set_session_state(self, state, reason=""):
         if self.state != state:
-            print(f"[SDK] session state {self.state.name} -> {state.name} reason={reason}")
+            print(
+                f"[SDK] session state {self.state.name} -> {state.name} reason={reason}"
+            )
         self.state = state
 
     def _emit_backend_state_from_session(self):
@@ -232,12 +236,16 @@ class FujifilmSdkBackend(CameraBackend):
             print("[SDK] _connect_if_possible skipped: state already active")
             return
 
-        self._set_session_state(SessionState.CONNECTING, "usb present -> trying connect")
+        self._set_session_state(
+            SessionState.CONNECTING, "usb present -> trying connect"
+        )
         self._emit_backend_state_from_session()
 
         try:
             descriptor = self.adapter.connect_camera()
-            print(f"[SDK] connect_camera ok model={descriptor.model} serial={descriptor.serial}")
+            print(
+                f"[SDK] connect_camera ok model={descriptor.model} serial={descriptor.serial}"
+            )
 
             self.camera_connected.emit(
                 {
@@ -323,7 +331,9 @@ class FujifilmSdkBackend(CameraBackend):
         self.live_timer.stop()
 
         if not self._is_session_open():
-            self._handle_session_lost("restart_live_view_after_capture: session not open")
+            self._handle_session_lost(
+                "restart_live_view_after_capture: session not open"
+            )
             return
 
         try:
@@ -588,10 +598,14 @@ class FujifilmSdkBackend(CameraBackend):
             try:
                 self.adapter.end_live_view()
             except Exception as live_stop_exc:
-                print(f"[SDK] end_live_view after runtime error ignored: {live_stop_exc}")
+                print(
+                    f"[SDK] end_live_view after runtime error ignored: {live_stop_exc}"
+                )
 
             self._set_session_state(SessionState.READY, "runtime error recovery")
             try:
                 self.start_live_view()
             except Exception as restart_exc:
-                print(f"[SDK] start_live_view after runtime error failed: {restart_exc}")
+                print(
+                    f"[SDK] start_live_view after runtime error failed: {restart_exc}"
+                )
