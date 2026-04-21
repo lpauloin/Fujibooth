@@ -582,7 +582,7 @@ class FujifilmSdkBackend(CameraBackend):
             if live_active and self.state is SessionState.LIVE:
                 self.live_timer.start()
 
-    def set_exposure(self, *, iso=None, shutter=None, aperture=None):
+    def set_exposure(self, *, iso=None, shutter=None, aperture=None, ae_mode=None):
         """
         Applies exposure settings.  Parameters are raw SDK integer values
         as returned by get_exposure_options.  Pass None to leave unchanged.
@@ -607,7 +607,7 @@ class FujifilmSdkBackend(CameraBackend):
 
         self.emit_backend_state(BackendState.UPDATING_CAMERA_PARAMS)
         try:
-            self.adapter.set_exposure(iso=iso, shutter=shutter, aperture=aperture)
+            self.adapter.set_exposure(iso=iso, shutter=shutter, aperture=aperture, ae_mode=ae_mode)
         except Exception as exc:
             print(f"[SDK] set_exposure() failed: {exc}")
             raise

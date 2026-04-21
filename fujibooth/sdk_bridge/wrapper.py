@@ -855,12 +855,12 @@ class FujifilmSdkAdapter:
         print(f"[SDK-WRAPPER] get_exposure_state -> {state}")
         return state
 
-    def set_exposure(self, *, iso=None, shutter=None, aperture=None):
+    def set_exposure(self, *, iso=None, shutter=None, aperture=None, ae_mode=None):
         lib, handle = self.ensure_session()
 
         print(
             f"[SDK-WRAPPER] set_exposure requested "
-            f"iso={iso} shutter={shutter} aperture={aperture}"
+            f"iso={iso} shutter={shutter} aperture={aperture} ae_mode={ae_mode}"
         )
 
         with self._sdk_lock:
@@ -904,10 +904,15 @@ class FujifilmSdkAdapter:
                 supported_ae_modes = []
                 print(f"[SDK-WRAPPER] cap_ae_mode failed: {exc}")
 
-            requested_ae_mode = self._choose_ae_mode_for_request(
-                shutter=shutter,
-                aperture=aperture,
-            )
+            # Use the explicitly requested AE mode if provided; otherwise infer
+            # from which parameters are set (e.g. aperture-only → A priority).
+            if ae_mode is not None:
+                requested_ae_mode = ae_mode
+            else:
+                requested_ae_mode = self._choose_ae_mode_for_request(
+                    shutter=shutter,
+                    aperture=aperture,
+                )
             print(
                 f"[SDK-WRAPPER] requested AE mode for exposure change="
                 f"{requested_ae_mode} "

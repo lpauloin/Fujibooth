@@ -708,20 +708,23 @@ class MainWindow(QMainWindow):
             return
 
         # currentData() returns the raw SDK integer stored via addItem(label, raw)
+        ae_mode = self.ae_mode_combo.currentData()
         iso = self.iso_combo.currentData()
         shutter = (
-            self.shutter_combo.currentData() if self.shutter_combo.count() > 0 else None
+            self.shutter_combo.currentData()
+            if self.shutter_combo.isEnabled() and self.shutter_combo.count() > 0
+            else None
         )
         aperture = (
             self.aperture_combo.currentData()
-            if self.aperture_combo.count() > 0
+            if self.aperture_combo.isEnabled() and self.aperture_combo.count() > 0
             else None
         )
 
-        print(f"[UI] applying exposure iso={iso} shutter={shutter} aperture={aperture}")
+        print(f"[UI] applying exposure ae_mode={ae_mode} iso={iso} shutter={shutter} aperture={aperture}")
 
         try:
-            self.backend.set_exposure(iso=iso, shutter=shutter, aperture=aperture)
+            self.backend.set_exposure(iso=iso, shutter=shutter, aperture=aperture, ae_mode=ae_mode)
             self._load_exposure_controls()
             self.message_label.setText("Exposure settings applied")
         except Exception as exc:
