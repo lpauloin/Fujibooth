@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
             output_dir=settings.output_path,
             extensions=settings.storage.accepted_extensions,
             filename_pattern=settings.storage.filename_pattern,
+            frame_path=settings.frame_path,
         )
         self.print_service = PrintService(
             enabled=settings.printing.enabled,

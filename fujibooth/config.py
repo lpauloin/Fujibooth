@@ -45,6 +45,7 @@ class StorageConfig:
     incoming_dir: str = "./runtime/incoming"
     accepted_extensions: list[str] = field(default_factory=lambda: [".jpg", ".jpeg", ".png", ".raf", ".heic"])
     filename_pattern: str = "%Y%m%d_%H%M%S"
+    frame_path: str = ""
 
 
 @dataclass(slots=True)
@@ -83,6 +84,12 @@ class Settings:
     @property
     def sdk_capture_path(self) -> Path:
         return Path(os.path.expanduser(self.camera.sdk.capture_dir)).resolve()
+
+    @property
+    def frame_path(self) -> Path | None:
+        if not self.storage.frame_path:
+            return None
+        return Path(os.path.expanduser(self.storage.frame_path)).resolve()
 
 
 def _merge_dict(defaults: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

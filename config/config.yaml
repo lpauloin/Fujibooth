@@ -22,6 +22,7 @@ storage:
   incoming_dir: "./runtime/incoming"
   accepted_extensions: [".jpg", ".jpeg", ".png", ".raf", ".heic"]
   filename_pattern: "%Y%m%d_%H%M%S"
+  frame_path: "./config/frame.png"
 
 printing:
   enabled: false
