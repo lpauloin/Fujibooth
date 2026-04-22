@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-_COMBO_STYLE = """
+COMBO_STYLE = """
 QComboBox {
     background: #1c1c1e;
     color: #f5f5f5;
@@ -47,16 +47,16 @@ QComboBox QAbstractItemView {
 }
 """
 
-_LABEL_STYLE = (
+LABEL_STYLE = (
     "color: #636366;" "font-size: 10px;" "font-weight: 700;" "letter-spacing: 2px;"
 )
 
-_SEPARATOR_STYLE = (
+SEPARATOR_STYLE = (
     "background: #2c2c2e;" "min-width: 1px;" "max-width: 1px;" "margin: 6px 0;"
 )
 
 
-class _ExposureColumn(QWidget):
+class ExposureColumn(QWidget):
     def __init__(self, label_text, placeholder_text):
         super().__init__()
         layout = QVBoxLayout(self)
@@ -64,13 +64,13 @@ class _ExposureColumn(QWidget):
         layout.setSpacing(6)
 
         header = QLabel(label_text)
-        header.setStyleSheet(_LABEL_STYLE)
+        header.setStyleSheet(LABEL_STYLE)
         layout.addWidget(header)
 
         self.combo = QComboBox()
         self.combo.setMinimumHeight(42)
         self.combo.setPlaceholderText(placeholder_text)
-        self.combo.setStyleSheet(_COMBO_STYLE)
+        self.combo.setStyleSheet(COMBO_STYLE)
         layout.addWidget(self.combo)
 
 
@@ -94,10 +94,10 @@ class ExposureBarWidget(QWidget):
         layout.setContentsMargins(20, 14, 20, 14)
         layout.setSpacing(0)
 
-        ae_col = _ExposureColumn("MODE", "P")
-        iso_col = _ExposureColumn("ISO", "AUTO")
-        shutter_col = _ExposureColumn("SHUTTER", "AUTO")
-        aperture_col = _ExposureColumn("APERTURE", "AUTO")
+        ae_col = ExposureColumn("MODE", "P")
+        iso_col = ExposureColumn("ISO", "AUTO")
+        shutter_col = ExposureColumn("SHUTTER", "AUTO")
+        aperture_col = ExposureColumn("APERTURE", "AUTO")
 
         self.ae_mode_combo = ae_col.combo
         self.iso_combo = iso_col.combo
@@ -114,7 +114,7 @@ class ExposureBarWidget(QWidget):
             if i < 3:
                 sep = QFrame()
                 sep.setFrameShape(QFrame.VLine)
-                sep.setStyleSheet(_SEPARATOR_STYLE)
+                sep.setStyleSheet(SEPARATOR_STYLE)
                 layout.addSpacing(16)
                 layout.addWidget(sep)
                 layout.addSpacing(16)

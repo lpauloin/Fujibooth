@@ -24,7 +24,7 @@ from .widgets import GalleryWidget, LiveViewWidget
 FREEZE_SECONDS = 10
 RETURN_TO_LIVEVIEW_SECONDS = 5
 
-_PRINT_BUTTON_STYLE = """
+PRINT_BUTTON_STYLE = """
 QPushButton {
     background: #ffffff;
     color: #000000;
@@ -44,7 +44,7 @@ QPushButton:pressed {
 }
 """
 
-_MESSAGE_STYLE = (
+MESSAGE_STYLE = (
     "color: #ebebf5;"
     "font-size: 20px;"
     "font-weight: 500;"
@@ -52,7 +52,7 @@ _MESSAGE_STYLE = (
     "opacity: 0.7;"
 )
 
-_SLIDER_STYLE = """
+SLIDER_STYLE = """
 QSlider::groove:horizontal {
     background: #1c1c1e;
     height: 4px;
@@ -188,11 +188,11 @@ class MainWindow(QMainWindow):
 
         self.message_label = QLabel("Waiting for FUJIFILM camera")
         self.message_label.setAlignment(Qt.AlignCenter)
-        self.message_label.setStyleSheet(_MESSAGE_STYLE)
+        self.message_label.setStyleSheet(MESSAGE_STYLE)
         layout.addWidget(self.message_label)
 
         self.print_button = QPushButton("PRINT")
-        self.print_button.setStyleSheet(_PRINT_BUTTON_STYLE)
+        self.print_button.setStyleSheet(PRINT_BUTTON_STYLE)
         self.print_button.setCursor(Qt.PointingHandCursor)
         self.print_button.hide()
         layout.addWidget(self.print_button, alignment=Qt.AlignCenter)
@@ -211,7 +211,7 @@ class MainWindow(QMainWindow):
         self.gallery_slider.setPageStep(300)
         self.gallery_slider.setEnabled(False)
         self.gallery_slider.setFixedHeight(20)
-        self.gallery_slider.setStyleSheet(_SLIDER_STYLE)
+        self.gallery_slider.setStyleSheet(SLIDER_STYLE)
         layout.addWidget(self.gallery_slider)
 
         self.setCentralWidget(root)

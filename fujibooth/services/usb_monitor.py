@@ -199,22 +199,31 @@ class USBMonitor(QObject):
                 self._ctx = None
                 return False
 
-            has_hotplug = self._libusb.libusb_has_capability(self.LIBUSB_CAP_HAS_HOTPLUG)
+            has_hotplug = self._libusb.libusb_has_capability(
+                self.LIBUSB_CAP_HAS_HOTPLUG
+            )
             print(f"[USB-MONITOR] libusb_has_capability(HOTPLUG)={has_hotplug}")
             if not has_hotplug:
                 self._libusb.libusb_exit(self._ctx)
                 self._ctx = None
                 return False
 
-            self._hotplug_callback = self._HotplugCallback(self._on_libusb_hotplug_event)
+            self._hotplug_callback = self._HotplugCallback(
+                self._on_libusb_hotplug_event
+            )
 
-            vendor_id = self._vendor_id if self._vendor_id is not None else self.LIBUSB_HOTPLUG_MATCH_ANY
+            vendor_id = (
+                self._vendor_id
+                if self._vendor_id is not None
+                else self.LIBUSB_HOTPLUG_MATCH_ANY
+            )
             product_id = self.LIBUSB_HOTPLUG_MATCH_ANY
             dev_class = self.LIBUSB_HOTPLUG_MATCH_ANY
 
             rc = self._libusb.libusb_hotplug_register_callback(
                 self._ctx,
-                self.LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | self.LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT,
+                self.LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED
+                | self.LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT,
                 self.LIBUSB_HOTPLUG_ENUMERATE,
                 vendor_id,
                 product_id,
@@ -332,11 +341,15 @@ class USBMonitor(QObject):
 
         for dev in devices:
             try:
-                manufacturer = self._safe_get_string(dev, getattr(dev, "iManufacturer", 0))
+                manufacturer = self._safe_get_string(
+                    dev, getattr(dev, "iManufacturer", 0)
+                )
                 product = self._safe_get_string(dev, getattr(dev, "iProduct", 0))
                 serial = self._safe_get_string(dev, getattr(dev, "iSerialNumber", 0))
 
-                combined_name = " ".join(part for part in [manufacturer, product] if part).strip()
+                combined_name = " ".join(
+                    part for part in [manufacturer, product] if part
+                ).strip()
                 lowered_name = combined_name.lower()
 
                 vendor_ok = expected_vendor is None or dev.idVendor == expected_vendor
