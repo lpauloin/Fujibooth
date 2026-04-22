@@ -1,18 +1,19 @@
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QPixmap
 
 from .state import BackendState
 
 
 class CameraBackend(QObject):
-    live_view_updated = Signal(QPixmap)
+    live_view_updated = Signal(object)
     photo_captured = Signal(str)
     camera_connected = Signal(dict)
     camera_disconnected = Signal()
     state_changed = Signal(object)
     error = Signal(str)
+    exposure_data_ready = Signal(object)
+    exposure_data_failed = Signal(str)
 
     def start(self) -> None:
         raise NotImplementedError

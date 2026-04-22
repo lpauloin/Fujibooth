@@ -3,12 +3,10 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QImage
 
 from .adapter import CameraDescriptor
 from .xsdk_ctypes import (
-    CameraPrecheckReport,
     FujiSdkLibrary,
     SDK_LIVEVIEW_MODE1,
     SDK_LIVEVIEW_QUALITY_FINE,
@@ -187,7 +185,7 @@ class FujifilmSdkAdapter:
         self._capture_in_progress = False
         self._stopping = False
 
-        self._last_frame = QPixmap()
+        self._last_frame = QImage()
 
         self._capture_thread = None
         self._last_captured_path = None
@@ -195,13 +193,6 @@ class FujifilmSdkAdapter:
 
         self._camera_opened_monotonic = None
         self._min_live_poll_interval_s = 0.10
-
-        # Cached exposure options as (label, raw_sdk_value) pairs per parameter.
-        self._cached_exposure_options = {
-            "iso": [],
-            "shutter": [],
-            "aperture": [],
-        }
 
         print(f"[SDK-WRAPPER] init sdk_root={self.sdk_root} xapi_path={self.xapi_path}")
 
@@ -504,6 +495,10 @@ class FujifilmSdkAdapter:
                 return
 
         with self._sdk_lock:
+            try:
+                lib.drain_read_buffer(handle)
+            except Exception as exc:
+                print(f"[SDK-WRAPPER] end_live_view drain ignored: {exc}")
             print("[SDK-WRAPPER] end_live_view()")
             lib.stop_live_view(handle)
 
@@ -531,10 +526,10 @@ class FujifilmSdkAdapter:
         if fmt != XSDK_IMAGEFORMAT_LIVE:
             return self._last_frame
 
-        pixmap = QPixmap()
-        if pixmap.loadFromData(raw):
-            self._last_frame = pixmap
-            return pixmap
+        image = QImage()
+        if image.loadFromData(raw):
+            self._last_frame = image
+            return image
 
         raise RuntimeError("Cannot decode live view frame")
 
@@ -627,6 +622,37 @@ class FujifilmSdkAdapter:
                     )
 
             return captured_path
+
+    def capture_photo(self, output_dir):
+        """
+        Execute a capture synchronously from the caller thread.
+
+        The backend now owns the global command queue, so capture must remain
+        inside that serialized execution path instead of starting an extra SDK
+        thread here.
+        """
+        with self._state_lock:
+            if self._capture_in_progress:
+                raise RuntimeError("A capture is already in progress")
+            self._capture_in_progress = True
+            self._last_captured_path = None
+            self._last_capture_error = None
+
+        try:
+            path = self._do_capture(output_dir)
+            with self._state_lock:
+                self._last_captured_path = path
+                self._last_capture_error = None
+            return path
+        except Exception as exc:
+            print(f"[SDK-WRAPPER] capture_photo error: {exc}")
+            with self._state_lock:
+                self._last_captured_path = None
+                self._last_capture_error = str(exc)
+            raise
+        finally:
+            with self._state_lock:
+                self._capture_in_progress = False
 
     def enqueue_capture(self, output_dir):
         with self._state_lock:
@@ -810,13 +836,6 @@ class FujifilmSdkAdapter:
             "iso": [(format_iso(v), v) for v in iso_values],
             "shutter": [(format_shutter(v), v) for v in shutter_values],
             "aperture": [(format_aperture(v), v) for v in aperture_values],
-        }
-
-        self._cached_exposure_options = {
-            "ae_mode": list(result["ae_mode"]),
-            "iso": list(result["iso"]),
-            "shutter": list(result["shutter"]),
-            "aperture": list(result["aperture"]),
         }
 
         print(

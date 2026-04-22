@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Slot
-from PySide6.QtGui import QKeyEvent, QPixmap
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QLabel,
@@ -183,7 +183,6 @@ class MainWindow(QMainWindow):
         self.iso_combo = self.exposure_bar.iso_combo
         self.shutter_combo = self.exposure_bar.shutter_combo
         self.aperture_combo = self.exposure_bar.aperture_combo
-        self.apply_exposure_button = self.exposure_bar.apply_button
         self.exposure_bar.hide()
         layout.addWidget(self.exposure_bar)
 
@@ -225,7 +224,7 @@ class MainWindow(QMainWindow):
         self.gallery.photo_selected.connect(self.on_photo_selected)
         self.print_button.clicked.connect(self.on_print_clicked)
 
-        self.exposure_bar.apply_clicked.connect(self.on_apply_exposure_clicked)
+        self.exposure_bar.changed.connect(self.on_exposure_changed)
         self.print_button_timer.timeout.disconnect()
         self.print_button_timer.timeout.connect(self.print_button.hide)
 
@@ -233,6 +232,8 @@ class MainWindow(QMainWindow):
         self.backend.photo_captured.connect(self.on_photo_captured)
         self.backend.error.connect(self.on_error)
         self.backend.state_changed.connect(self.on_backend_state_changed)
+        self.backend.exposure_data_ready.connect(self.on_exposure_data_ready)
+        self.backend.exposure_data_failed.connect(self.on_exposure_data_failed)
 
         self.backend.camera_connected.connect(self._on_backend_camera_connected)
         self.backend.camera_disconnected.connect(self._on_backend_camera_disconnected)
@@ -300,7 +301,6 @@ class MainWindow(QMainWindow):
         self.exposure_bar.set_controls_enabled(enabled)
 
     def _set_combo_by_value(self, combo, raw_value):
-        """Select the item whose UserRole data matches raw_value."""
         if raw_value is None:
             return
         index = combo.findData(raw_value)
@@ -309,164 +309,47 @@ class MainWindow(QMainWindow):
         else:
             print(f"[UI] _set_combo_by_value: value {raw_value!r} not found in combo")
 
+    def _set_combo_auto(self, combo) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("AUTO", None)
+        combo.setCurrentIndex(0)
+        combo.setEnabled(False)
+        combo.blockSignals(False)
+
+    @staticmethod
+    def _combo_is_auto(combo) -> bool:
+        return combo.count() == 1 and combo.itemData(0) is None
+
+    def _reapply_combo_enabled_state(self) -> None:
+        """Re-disable AUTO combos after a blind _set_exposure_controls_enabled(True).
+        No SDK calls — purely inspects current combo content."""
+        if not self._camera_connected:
+            return
+        if self.ae_mode_combo.currentData() is None:
+            return
+        if self._combo_is_auto(self.shutter_combo):
+            self.shutter_combo.setEnabled(False)
+        if self._combo_is_auto(self.aperture_combo):
+            self.aperture_combo.setEnabled(False)
+
     def _load_exposure_controls(self):
         print("[UI] _load_exposure_controls()")
 
-        # Prevent overlapping refreshes when the camera is temporarily busy.
+        # Exposure refresh is asynchronous now. The backend serializes every
+        # SDK call through its command queue, so the UI only requests work here.
         if getattr(self, "_loading_exposure_controls", False):
             print("[UI] _load_exposure_controls skipped: already running")
             return
 
+        if not self._camera_connected:
+            print("[UI] _load_exposure_controls skipped: camera not connected")
+            return
+
         self._loading_exposure_controls = True
-
-        try:
-            try:
-                options = self.backend.get_exposure_options()
-                state = self.backend.get_exposure_state()
-            except Exception as exc:
-                print(f"[UI] _load_exposure_controls error: {exc}")
-
-                # Retry a limited number of times because the camera can be busy
-                # right after switching AE mode or restarting live view.
-                retry_count = getattr(self, "_exposure_controls_retry_count", 0) + 1
-                self._exposure_controls_retry_count = retry_count
-                print(f"[UI] _load_exposure_controls retry_count={retry_count}")
-
-                if retry_count <= 3:
-                    self.message_label.setText(
-                        "Camera is busy, refreshing exposure controls..."
-                    )
-                    QTimer.singleShot(600, self._load_exposure_controls)
-                else:
-                    print("[UI] _load_exposure_controls giving up after retries")
-                    self.message_label.setText("Failed to refresh exposure controls")
-
-                return
-
-            # Reset retry counter on success.
-            self._exposure_controls_retry_count = 0
-
-            self.ae_mode_combo.blockSignals(True)
-            self.iso_combo.blockSignals(True)
-            self.shutter_combo.blockSignals(True)
-            self.aperture_combo.blockSignals(True)
-
-            try:
-                self.ae_mode_combo.clear()
-                self.iso_combo.clear()
-                self.shutter_combo.clear()
-                self.aperture_combo.clear()
-
-                # Populate with (display_label, raw_sdk_value) pairs.
-                for label, raw in options.get("ae_mode", []):
-                    self.ae_mode_combo.addItem(label, raw)
-
-                for label, raw in options.get("iso", []):
-                    self.iso_combo.addItem(label, raw)
-
-                for label, raw in options.get("shutter", []):
-                    self.shutter_combo.addItem(label, raw)
-
-                for label, raw in options.get("aperture", []):
-                    self.aperture_combo.addItem(label, raw)
-
-                # Select the current camera values by matching raw SDK integers.
-                self._set_combo_by_value(self.ae_mode_combo, state.get("ae_mode"))
-                self._set_combo_by_value(self.iso_combo, state.get("iso"))
-                self._set_combo_by_value(self.shutter_combo, state.get("shutter"))
-                self._set_combo_by_value(self.aperture_combo, state.get("aperture"))
-
-            finally:
-                self.ae_mode_combo.blockSignals(False)
-                self.iso_combo.blockSignals(False)
-                self.shutter_combo.blockSignals(False)
-                self.aperture_combo.blockSignals(False)
-
-            ae_mode = state.get("ae_mode")
-            shutter_available = self.shutter_combo.count() > 0
-            aperture_available = self.aperture_combo.count() > 0
-
-            print(
-                f"[UI] exposure UX sync ae_mode={ae_mode} "
-                f"shutter_available={shutter_available} "
-                f"aperture_available={aperture_available}"
-            )
-
-            # Keep ISO and AE mode available whenever the camera is connected.
-            self.iso_combo.setEnabled(self._camera_connected)
-            self.ae_mode_combo.setEnabled(self._camera_connected)
-
-            # Match combo availability to the current PASM mode.
-            # Fujifilm AE mode values:
-            #   1 = M
-            #   3 = A
-            #   4 = S
-            #   6 = P
-            if ae_mode == 3:  # A
-                self.shutter_combo.setEnabled(False)
-                self.aperture_combo.setEnabled(
-                    self._camera_connected and aperture_available
-                )
-            elif ae_mode == 4:  # S
-                self.shutter_combo.setEnabled(
-                    self._camera_connected and shutter_available
-                )
-                self.aperture_combo.setEnabled(False)
-            elif ae_mode == 1:  # M
-                self.shutter_combo.setEnabled(
-                    self._camera_connected and shutter_available
-                )
-                self.aperture_combo.setEnabled(
-                    self._camera_connected and aperture_available
-                )
-            else:  # P or fallback
-                self.shutter_combo.setEnabled(False)
-                self.aperture_combo.setEnabled(False)
-
-            if self.shutter_combo.count() == 0:
-                self.shutter_combo.setPlaceholderText("Auto in current mode")
-
-            if self.aperture_combo.count() == 0:
-                self.aperture_combo.setPlaceholderText("Auto in current mode")
-
-            print(
-                f"[UI] _load_exposure_controls done "
-                f"ae_mode_count={self.ae_mode_combo.count()} "
-                f"iso_count={self.iso_combo.count()} "
-                f"shutter_count={self.shutter_combo.count()} "
-                f"aperture_count={self.aperture_combo.count()} "
-                f"state={state}"
-            )
-
-            if self._camera_connected:
-                if ae_mode == 3:
-                    self.message_label.setText(
-                        "A mode: aperture controlled, shutter automatic"
-                    )
-                elif ae_mode == 4:
-                    self.message_label.setText(
-                        "S mode: shutter controlled, aperture automatic"
-                    )
-                elif ae_mode == 1:
-                    self.message_label.setText(
-                        "M mode: shutter and aperture controlled"
-                    )
-                elif ae_mode == 6:
-                    self.message_label.setText("P mode: shutter and aperture automatic")
-                elif not shutter_available and not aperture_available:
-                    self.message_label.setText(
-                        "Current mode does not allow shutter or aperture control"
-                    )
-                elif not shutter_available:
-                    self.message_label.setText(
-                        "Current mode does not allow shutter control"
-                    )
-                elif not aperture_available:
-                    self.message_label.setText(
-                        "Current mode does not allow aperture control"
-                    )
-        finally:
-            self._loading_exposure_controls = False
+        self._set_exposure_controls_enabled(False)
+        self.message_label.setText("Refreshing camera controls...")
+        self.backend.request_exposure_data()
 
     def _apply_idle_ui(self):
         print("[UI] _apply_idle_ui()")
@@ -619,62 +502,150 @@ class MainWindow(QMainWindow):
             self._apply_idle_ui()
             self.message_label.setText(str(exc))
 
-    @Slot()
-    def on_apply_ae_mode_clicked(self):
-        print("[UI] on_apply_ae_mode_clicked()")
+    @Slot(str)
+    def on_exposure_changed(self, field: str):
+        print(f"[UI] on_exposure_changed field={field}")
         if not self._camera_connected:
             self.message_label.setText("Waiting for FUJIFILM camera")
             return
 
-        ae_mode = self.ae_mode_combo.currentData()
-        print(f"[UI] applying AE mode ae_mode={ae_mode}")
-
-        try:
-            self.backend.set_ae_mode(ae_mode)
-            self._load_exposure_controls()
-        except Exception as exc:
-            print(f"[UI] on_apply_ae_mode_clicked error: {exc}")
-            self._set_exposure_controls_enabled(self._camera_connected)
-            self.message_label.setText(str(exc))
-
-    @Slot()
-    def on_apply_exposure_clicked(self):
-        print("[UI] on_apply_exposure_clicked()")
-        if not self._camera_connected:
-            self.message_label.setText("Waiting for FUJIFILM camera")
-            return
-
-        # currentData() returns the raw SDK integer stored via addItem(label, raw)
         ae_mode = self.ae_mode_combo.currentData()
         iso = self.iso_combo.currentData()
-        shutter = (
-            self.shutter_combo.currentData()
-            if self.shutter_combo.isEnabled() and self.shutter_combo.count() > 0
-            else None
-        )
-        aperture = (
-            self.aperture_combo.currentData()
-            if self.aperture_combo.isEnabled() and self.aperture_combo.count() > 0
-            else None
-        )
+        # Only send the value that the user just changed. Sending stale combo
+        # values for other fields causes wrong settings when switching AE modes
+        # (e.g. switching M→A would send the old M-mode aperture value).
+        shutter = self.shutter_combo.currentData() if field == "shutter" else None
+        aperture = self.aperture_combo.currentData() if field == "aperture" else None
 
         print(
             f"[UI] applying exposure ae_mode={ae_mode} iso={iso} shutter={shutter} aperture={aperture}"
         )
 
-        try:
-            self.backend.set_exposure(
-                iso=iso, shutter=shutter, aperture=aperture, ae_mode=ae_mode
-            )
-            self._load_exposure_controls()
-            self.message_label.setText("Exposure settings applied")
-        except Exception as exc:
-            print(f"[UI] on_apply_exposure_clicked error: {exc}")
-            self._set_exposure_controls_enabled(self._camera_connected)
-            self.message_label.setText(str(exc))
+        self.backend.set_exposure(
+            iso=iso, shutter=shutter, aperture=aperture, ae_mode=ae_mode
+        )
+        self.message_label.setText("Applying camera settings...")
 
-    @Slot(QPixmap)
+    @Slot(object)
+    def on_exposure_data_ready(self, payload):
+        print(f"[UI] on_exposure_data_ready payload_keys={list(payload.keys())}")
+
+        options = payload.get("options", {})
+        state = payload.get("state", {})
+
+        self.ae_mode_combo.blockSignals(True)
+        self.iso_combo.blockSignals(True)
+        self.shutter_combo.blockSignals(True)
+        self.aperture_combo.blockSignals(True)
+
+        try:
+            self.ae_mode_combo.clear()
+            self.iso_combo.clear()
+            self.shutter_combo.clear()
+            self.aperture_combo.clear()
+
+            for label, raw in options.get("ae_mode", []):
+                self.ae_mode_combo.addItem(label, raw)
+
+            for label, raw in options.get("iso", []):
+                self.iso_combo.addItem(label, raw)
+
+            for label, raw in options.get("shutter", []):
+                self.shutter_combo.addItem(label, raw)
+
+            for label, raw in options.get("aperture", []):
+                self.aperture_combo.addItem(label, raw)
+
+            self._set_combo_by_value(self.ae_mode_combo, state.get("ae_mode"))
+            self._set_combo_by_value(self.iso_combo, state.get("iso"))
+            self._set_combo_by_value(self.shutter_combo, state.get("shutter"))
+            self._set_combo_by_value(self.aperture_combo, state.get("aperture"))
+
+        finally:
+            self.ae_mode_combo.blockSignals(False)
+            self.iso_combo.blockSignals(False)
+            self.shutter_combo.blockSignals(False)
+            self.aperture_combo.blockSignals(False)
+
+        ae_mode = state.get("ae_mode")
+        shutter_available = self.shutter_combo.count() > 0
+        aperture_available = self.aperture_combo.count() > 0
+
+        print(
+            f"[UI] exposure UX sync ae_mode={ae_mode} "
+            f"shutter_available={shutter_available} "
+            f"aperture_available={aperture_available}"
+        )
+
+        self.iso_combo.setEnabled(self._camera_connected)
+        self.ae_mode_combo.setEnabled(self._camera_connected)
+
+        shutter_active = ae_mode in (1, 4) and shutter_available
+        aperture_active = ae_mode in (1, 3) and aperture_available
+
+        if shutter_active:
+            self.shutter_combo.setEnabled(self._camera_connected)
+        else:
+            self._set_combo_auto(self.shutter_combo)
+
+        if aperture_active:
+            self.aperture_combo.setEnabled(self._camera_connected)
+        else:
+            self._set_combo_auto(self.aperture_combo)
+
+        self._loading_exposure_controls = False
+
+        print(
+            f"[UI] exposure controls refreshed "
+            f"ae_mode_count={self.ae_mode_combo.count()} "
+            f"iso_count={self.iso_combo.count()} "
+            f"shutter_count={self.shutter_combo.count()} "
+            f"aperture_count={self.aperture_combo.count()} "
+            f"state={state}"
+        )
+
+        if self._camera_connected:
+            if ae_mode == 3:
+                self.message_label.setText(
+                    "A mode: aperture controlled, shutter automatic"
+                )
+            elif ae_mode == 4:
+                self.message_label.setText(
+                    "S mode: shutter controlled, aperture automatic"
+                )
+            elif ae_mode == 1:
+                self.message_label.setText("M mode: shutter and aperture controlled")
+            elif ae_mode == 6:
+                self.message_label.setText("P mode: shutter and aperture automatic")
+            elif not shutter_available and not aperture_available:
+                self.message_label.setText(
+                    "Current mode does not allow shutter or aperture control"
+                )
+            elif not shutter_available:
+                self.message_label.setText(
+                    "Current mode does not allow shutter control"
+                )
+            elif not aperture_available:
+                self.message_label.setText(
+                    "Current mode does not allow aperture control"
+                )
+
+        self._set_exposure_controls_enabled(self._camera_connected)
+        self._reapply_combo_enabled_state()
+
+    @Slot(str)
+    def on_exposure_data_failed(self, message):
+        print(f"[UI] on_exposure_data_failed message={message}")
+        self._loading_exposure_controls = False
+        self._set_exposure_controls_enabled(self._camera_connected)
+        if self._camera_connected:
+            self.message_label.setText(message)
+
+    @Slot(object)
     def on_live_view_updated(self, pixmap):
+        if not isinstance(pixmap, QPixmap):
+            pixmap = QPixmap.fromImage(pixmap)
+
         print(f"[UI] on_live_view_updated null={pixmap.isNull()} size={pixmap.size()}")
         if pixmap.isNull():
             return
@@ -817,13 +788,19 @@ class MainWindow(QMainWindow):
             self.message_label.setText("Tap the image to start the photobooth")
             if self._camera_connected:
                 self._set_exposure_controls_enabled(True)
+                if not getattr(self, "_loading_exposure_controls", False):
+                    self._reapply_combo_enabled_state()
 
         elif state is BackendState.LIVE_VIEW:
+            already_live = self.state is BoothState.LIVE_VIEW
             self._set_state(BoothState.LIVE_VIEW)
-            self._apply_idle_ui()
-            self.message_label.setText("Tap the image to start the photobooth")
+            if not already_live:
+                self._apply_idle_ui()
+                self.message_label.setText("Tap the image to start the photobooth")
             if self._camera_connected:
                 self._set_exposure_controls_enabled(True)
+                if not getattr(self, "_loading_exposure_controls", False):
+                    self._reapply_combo_enabled_state()
 
         elif state is BackendState.UPDATING_CAMERA_PARAMS:
             self._set_exposure_controls_enabled(False)
@@ -864,7 +841,7 @@ class MainWindow(QMainWindow):
             payload.get("label", "FUJIFILM").replace(" connected", "").strip()
         )
         self._show_camera_badge(True)
-        self._set_exposure_controls_enabled(True)
+        self._set_exposure_controls_enabled(False)
         self._load_exposure_controls()
         self._debug_dump_ui_state("after _on_backend_camera_connected")
 
@@ -873,6 +850,7 @@ class MainWindow(QMainWindow):
         print("[UI] _on_backend_camera_disconnected()")
         self._camera_connected = False
         self._camera_label = "FUJIFILM"
+        self._loading_exposure_controls = False
         self._set_exposure_controls_enabled(False)
         self.ae_mode_combo.clear()
         self.iso_combo.clear()
@@ -886,6 +864,7 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def on_error(self, message):
         print(f"[UI] on_error message={message}")
+        self._loading_exposure_controls = False
         self._set_state(BoothState.ERROR)
         self._apply_idle_ui()
         self.live_view.hide_overlay()
