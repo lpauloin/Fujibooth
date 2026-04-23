@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-from .state import BackendState
+from ..models.state import BackendState
 
 
 class CameraBackend(QObject):

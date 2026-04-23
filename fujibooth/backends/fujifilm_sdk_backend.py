@@ -1,22 +1,11 @@
 import queue
 import threading
 import time
-from enum import Enum, auto
 
+from ..models.commands import WorkerCommand
+from ..models.state import BackendState, SessionState
 from ..sdk_bridge.wrapper import FujifilmSdkAdapter
 from .base import CameraBackend
-from .state import BackendState
-
-
-class SessionState(Enum):
-    STOPPED = auto()
-    WAITING_USB = auto()
-    CONNECTING = auto()
-    READY = auto()
-    LIVE = auto()
-    QUERYING = auto()
-    CAPTURING = auto()
-    ERROR = auto()
 
 
 class FujifilmSdkBackend(CameraBackend):
@@ -154,11 +143,11 @@ class FujifilmSdkBackend(CameraBackend):
 
         if self._exposure_refresh_requested and not self._exposure_refresh_scheduled:
             self._exposure_refresh_scheduled = True
-            self._enqueue_command("refresh_exposure")
+            self._enqueue_command(WorkerCommand.REFRESH_EXPOSURE)
 
         if self._latest_exposure_request and not self._exposure_apply_scheduled:
             self._exposure_apply_scheduled = True
-            self._enqueue_command("apply_exposure")
+            self._enqueue_command(WorkerCommand.APPLY_EXPOSURE)
 
     def _compute_wait_timeout(self):
         deadlines = []
@@ -212,7 +201,7 @@ class FujifilmSdkBackend(CameraBackend):
             self._stopping = True
 
         self._stop_event.set()
-        self._enqueue_command("shutdown")
+        self._enqueue_command(WorkerCommand.SHUTDOWN)
 
         worker = self._worker_thread
         if worker is not None and worker.is_alive():
@@ -254,7 +243,7 @@ class FujifilmSdkBackend(CameraBackend):
                 except queue.Empty:
                     continue
 
-                if command == "shutdown":
+                if command is WorkerCommand.SHUTDOWN:
                     break
 
                 self._dispatch_worker_command(command, payload)
@@ -288,40 +277,25 @@ class FujifilmSdkBackend(CameraBackend):
     # Worker command handling
     # ------------------------------------------------------------
 
-    def _dispatch_worker_command(self, command, payload):
-        print(f"[SDK] worker command={command} state={self._current_state().name}")
+    def _dispatch_worker_command(self, command: WorkerCommand, payload):
+        print(f"[SDK] worker command={command.name} state={self._current_state().name}")
 
-        if command == "usb_connected":
+        if command is WorkerCommand.USB_CONNECTED:
             self._handle_usb_connected_from_worker(payload)
-            return
-
-        if command == "usb_disconnected":
+        elif command is WorkerCommand.USB_DISCONNECTED:
             self._handle_usb_disconnected_from_worker()
-            return
-
-        if command == "connect":
+        elif command is WorkerCommand.CONNECT:
             self._connect_if_possible_from_worker()
-            return
-
-        if command == "start_live_view":
+        elif command is WorkerCommand.START_LIVE_VIEW:
             self._try_start_live_view_from_worker("manual start")
-            return
-
-        if command == "stop_live_view":
+        elif command is WorkerCommand.STOP_LIVE_VIEW:
             self._stop_live_view_from_worker("manual stop")
-            return
-
-        if command == "refresh_exposure":
+        elif command is WorkerCommand.REFRESH_EXPOSURE:
             self._process_pending_exposure_refresh_from_worker()
-            return
-
-        if command == "apply_exposure":
+        elif command is WorkerCommand.APPLY_EXPOSURE:
             self._process_pending_exposure_apply_from_worker()
-            return
-
-        if command == "capture":
+        elif command is WorkerCommand.CAPTURE:
             self._capture_photo_from_worker()
-            return
 
     def _run_periodic_tasks_once(self):
         now = time.monotonic()
@@ -368,14 +342,14 @@ class FujifilmSdkBackend(CameraBackend):
         if self._stopping:
             return
 
-        self._enqueue_command("usb_connected", payload)
+        self._enqueue_command(WorkerCommand.USB_CONNECTED, payload)
 
     def handle_usb_disconnected(self):
         print("[SDK] handle_usb_disconnected()")
         with self._lock:
             self._usb_present = False
 
-        self._enqueue_command("usb_disconnected")
+        self._enqueue_command(WorkerCommand.USB_DISCONNECTED)
 
     def _handle_usb_connected_from_worker(self, payload):
         if self._stopping or self._current_state() is SessionState.STOPPED:
@@ -397,7 +371,7 @@ class FujifilmSdkBackend(CameraBackend):
     # ------------------------------------------------------------
 
     def connect_camera(self):
-        self._enqueue_command("connect")
+        self._enqueue_command(WorkerCommand.CONNECT)
 
     def disconnect_camera(self):
         self.handle_usb_disconnected()
@@ -476,10 +450,10 @@ class FujifilmSdkBackend(CameraBackend):
     # ------------------------------------------------------------
 
     def start_live_view(self):
-        self._enqueue_command("start_live_view")
+        self._enqueue_command(WorkerCommand.START_LIVE_VIEW)
 
     def stop_live_view(self):
-        self._enqueue_command("stop_live_view")
+        self._enqueue_command(WorkerCommand.STOP_LIVE_VIEW)
 
     def _try_start_live_view_from_worker(self, reason):
         print(f"[SDK] _try_start_live_view_from_worker reason={reason}")
@@ -591,7 +565,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._exposure_refresh_requested = True
         if not self._exposure_refresh_scheduled:
             self._exposure_refresh_scheduled = True
-            self._enqueue_command("refresh_exposure")
+            self._enqueue_command(WorkerCommand.REFRESH_EXPOSURE)
 
     def get_exposure_data(self):
         raise RuntimeError("Exposure data is now asynchronous. Use request_exposure_data().")
@@ -611,7 +585,7 @@ class FujifilmSdkBackend(CameraBackend):
 
         if not self._exposure_apply_scheduled:
             self._exposure_apply_scheduled = True
-            self._enqueue_command("apply_exposure")
+            self._enqueue_command(WorkerCommand.APPLY_EXPOSURE)
 
     def _process_pending_exposure_refresh_from_worker(self):
         state = self._current_state()
@@ -719,7 +693,7 @@ class FujifilmSdkBackend(CameraBackend):
 
     def trigger_capture(self):
         print(f"[SDK] trigger_capture() state={self._current_state().name}")
-        self._enqueue_command("capture")
+        self._enqueue_command(WorkerCommand.CAPTURE)
 
     def _capture_photo_from_worker(self):
         state = self._current_state()

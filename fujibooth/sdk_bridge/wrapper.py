@@ -197,11 +197,11 @@ MODEL_APERTURE_BLOCKLIST = {
 }
 
 
-def _blocklist_for_model(table: dict[str, set[int]], model: str | None) -> set[int]:
+def _blocklist_for_model(table, model):
     if not model:
         return set()
     model_upper = model.upper()
-    result: set[int] = set()
+    result = set()
     for key, values in table.items():
         if key.upper() in model_upper:
             result |= values
