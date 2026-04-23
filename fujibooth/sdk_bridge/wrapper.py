@@ -169,6 +169,45 @@ def format_aperture(value):
     return f"f/{value / 100:.1f}"
 
 
+# Per-model blocklists for capability values that crash the SDK even when
+# reported as supported. Keys are substrings matched against the camera model
+# string (case-insensitive). Values are sets of raw SDK integers to exclude.
+#
+# Shutter values are exposure periods in microseconds (as in XAPI.H).
+# To extend: when a crash occurs look for the last
+# "[SDK-WRAPPER] applying shutter/ISO/aperture=<value>" log line.
+
+# X-T4 electronic shutter tops out at 1/32000 s (≈ 30 µs).
+# Values below represent shutter speeds faster than 1/32000 that other
+# Fujifilm bodies support but the X-T4 does not (e.g. X-H2S, GFX).
+#   5 → 1/180000, 6 → 1/160000, 7 → 1/128000, 9 → 1/102400,
+#   12 → 1/80000,  15 → 1/64000,  19 → 1/51200,  24 → 1/40000
+MODEL_SHUTTER_BLOCKLIST = {
+    "X-T4": {5, 6, 7, 9, 12, 15, 19, 24},
+}
+
+# X-T4 has three ISO AUTO presets (AUTO1/2/3 = SDK values -1/-2/-3).
+# SDK value -4 ("ISO AUTO (4)") does not exist on this body.
+MODEL_ISO_BLOCKLIST = {
+    "X-T4": {-4},
+}
+
+MODEL_APERTURE_BLOCKLIST = {
+    "X-T4": set(),
+}
+
+
+def _blocklist_for_model(table: dict[str, set[int]], model: str | None) -> set[int]:
+    if not model:
+        return set()
+    model_upper = model.upper()
+    result: set[int] = set()
+    for key, values in table.items():
+        if key.upper() in model_upper:
+            result |= values
+    return result
+
+
 class FujifilmSdkAdapter:
     def __init__(self, sdk_root, xapi_path=None):
         self.sdk_root = Path(sdk_root).expanduser().resolve()
@@ -193,6 +232,7 @@ class FujifilmSdkAdapter:
 
         self._camera_opened_monotonic = None
         self._min_live_poll_interval_s = 0.10
+        self._camera_model = None
 
         print(f"[SDK-WRAPPER] init sdk_root={self.sdk_root} xapi_path={self.xapi_path}")
 
@@ -336,6 +376,9 @@ class FujifilmSdkAdapter:
                             self._last_captured_path = None
                             self._last_capture_error = None
                             self._camera_opened_monotonic = time.monotonic()
+
+                        with self._state_lock:
+                            self._camera_model = info.model
 
                         descriptor = CameraDescriptor(
                             model=info.model,
@@ -826,10 +869,33 @@ class FujifilmSdkAdapter:
 
         print("[SDK-WRAPPER] get_exposure_options()")
 
+        with self._state_lock:
+            model = self._camera_model
+
         iso_values = lib.cap_sensitivity(handle)
         shutter_values, shutter_bulb_supported = lib.cap_shutter_speed(handle)
         zoom_pos = self.get_current_zoom_pos()
         aperture_values = lib.cap_aperture(handle, zoom_pos)
+
+        iso_block = _blocklist_for_model(MODEL_ISO_BLOCKLIST, model)
+        shutter_block = _blocklist_for_model(MODEL_SHUTTER_BLOCKLIST, model)
+        aperture_block = _blocklist_for_model(MODEL_APERTURE_BLOCKLIST, model)
+
+        if iso_block:
+            iso_values = [v for v in iso_values if v not in iso_block]
+            print(
+                f"[SDK-WRAPPER] model blocklist filtered ISO; remaining={len(iso_values)}"
+            )
+        if shutter_block:
+            shutter_values = [v for v in shutter_values if v not in shutter_block]
+            print(
+                f"[SDK-WRAPPER] model blocklist filtered shutter; remaining={len(shutter_values)}"
+            )
+        if aperture_block:
+            aperture_values = [v for v in aperture_values if v not in aperture_block]
+            print(
+                f"[SDK-WRAPPER] model blocklist filtered aperture; remaining={len(aperture_values)}"
+            )
 
         result = {
             "ae_mode": self.get_ae_mode_options(),
@@ -1028,21 +1094,43 @@ class FujifilmSdkAdapter:
                 f"[SDK-WRAPPER] supported aperture values={sorted(supported_aperture)}"
             )
 
+            with self._state_lock:
+                model = self._camera_model
+            iso_block = _blocklist_for_model(MODEL_ISO_BLOCKLIST, model)
+            shutter_block = _blocklist_for_model(MODEL_SHUTTER_BLOCKLIST, model)
+            aperture_block = _blocklist_for_model(MODEL_APERTURE_BLOCKLIST, model)
+
             if iso is not None:
-                if iso in supported_iso:
+                if iso in iso_block:
+                    print(
+                        f"[SDK-WRAPPER] ISO={iso} blocked for model={model}, skipping"
+                    )
+                elif iso in supported_iso:
                     print(f"[SDK-WRAPPER] applying ISO={iso}")
-                    lib.set_sensitivity(handle, iso)
-                    time.sleep(0.15)
+                    try:
+                        lib.set_sensitivity(handle, iso)
+                        time.sleep(0.15)
+                    except Exception as exc:
+                        print(f"[SDK-WRAPPER] set_sensitivity({iso}) failed: {exc}")
                 else:
                     print(
                         f"[SDK-WRAPPER] requested ISO={iso} not supported in current state"
                     )
 
             if shutter is not None:
-                if shutter in supported_shutter:
+                if shutter in shutter_block:
+                    print(
+                        f"[SDK-WRAPPER] shutter={shutter} blocked for model={model}, skipping"
+                    )
+                elif shutter in supported_shutter:
                     print(f"[SDK-WRAPPER] applying shutter={shutter}")
-                    lib.set_shutter_speed(handle, shutter)
-                    time.sleep(0.15)
+                    try:
+                        lib.set_shutter_speed(handle, shutter)
+                        time.sleep(0.15)
+                    except Exception as exc:
+                        print(
+                            f"[SDK-WRAPPER] set_shutter_speed({shutter}) failed: {exc}"
+                        )
                 else:
                     print(
                         f"[SDK-WRAPPER] requested shutter={shutter} "
@@ -1050,10 +1138,17 @@ class FujifilmSdkAdapter:
                     )
 
             if aperture is not None:
-                if aperture in supported_aperture:
+                if aperture in aperture_block:
+                    print(
+                        f"[SDK-WRAPPER] aperture={aperture} blocked for model={model}, skipping"
+                    )
+                elif aperture in supported_aperture:
                     print(f"[SDK-WRAPPER] applying aperture={aperture}")
-                    lib.set_aperture(handle, aperture)
-                    time.sleep(0.15)
+                    try:
+                        lib.set_aperture(handle, aperture)
+                        time.sleep(0.15)
+                    except Exception as exc:
+                        print(f"[SDK-WRAPPER] set_aperture({aperture}) failed: {exc}")
                 else:
                     print(
                         f"[SDK-WRAPPER] requested aperture={aperture} "
