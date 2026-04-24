@@ -244,28 +244,6 @@ HidDeviceCapture (hid library, polling thread)
 RemoteControlService ──► button_pressed signal ──► MainWindow
 ```
 
----
-
-## Diagnostics
-
-If the camera is not detected or capture fails, run the SDK diagnostic tool:
-
-```bash
-python tools/fuji_sdk_diag.py --sdk-root ./sdk --test state
-python tools/fuji_sdk_diag.py --sdk-root ./sdk --test capture-pc-all
-```
-
-Available tests: `state`, `capture-pc`, `capture-pc-all`
-
-These report:
-
-- whether the SDK session opens
-- whether live view works
-- which release modes are available
-- whether remote capture is allowed in the current camera mode
-
----
-
 ## Troubleshooting
 
 ### Camera not detected
