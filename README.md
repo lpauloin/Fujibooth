@@ -244,45 +244,6 @@ HidDeviceCapture (hid library, polling thread)
 RemoteControlService ──► button_pressed signal ──► MainWindow
 ```
 
-## Troubleshooting
-
-### Camera not detected
-
-- Make sure the camera is powered on and in the correct USB mode
-- Verify SDK files are present in `./sdk/`
-- Check `sdk_root` in `config.yaml`
-
-### Live view works but capture fails
-
-The camera mode matters. Ensure:
-
-- Camera is in **photo mode** (not video)
-- **Single drive** mode is selected
-- No on-camera workflow is blocking the remote trigger
-
-Run `capture-pc-all` to confirm what the SDK allows in the current state.
-
-### Remote cursor moves when using directional buttons
-
-The `hid` library does not seize the device exclusively. This is a known limitation — the OS also receives the remote's
-HID events. Workaround: use only the volume buttons (report ID 3) which are consumer-control events and don't move the
-cursor.
-
-### hidapi not found
-
-```bash
-brew install hidapi
-```
-
-The `hid` Python package is a thin wrapper around the native `libhidapi` — it must be installed separately via Homebrew.
-
-### Segmentation faults
-
-- Keep SDK calls serialized (the backend uses a command queue for this)
-- Avoid polling the SDK faster than `live_view_interval_ms`
-- Do not call SDK functions from multiple threads simultaneously
-
----
 
 ## License
 
