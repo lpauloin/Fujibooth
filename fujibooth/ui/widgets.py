@@ -298,9 +298,11 @@ class GalleryWidget(QWidget):
         self.layout.addStretch(1)
 
     def set_remote_selection(self, index):
-        """Highlight thumbnail at index with a red border (-1 = clear all)."""
+        """Highlight thumbnail at index with a red border and scroll it into view (-1 = clear all)."""
         for i, thumb in enumerate(self._thumbs):
             thumb.set_remote_selected(i == index)
+        if 0 <= index < len(self._thumbs):
+            self.scroll.ensureWidgetVisible(self._thumbs[index])
 
     def find_photo_index(self, photo_path):
         """Return the position of photo_path in current thumbs, -1 if not found."""
