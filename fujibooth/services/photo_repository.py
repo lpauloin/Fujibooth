@@ -6,7 +6,9 @@ from PIL import Image as PILImage
 
 
 class PhotoRepository:
-    def __init__(self, captures_dir, output_dir, extensions, filename_pattern, frame_path):
+    def __init__(
+        self, captures_dir, output_dir, extensions, filename_pattern, frame_path
+    ):
         self.captures_dir = captures_dir
         self.output_dir = output_dir
         self.captures_dir.mkdir(parents=True, exist_ok=True)

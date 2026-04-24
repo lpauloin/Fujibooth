@@ -9,20 +9,15 @@ from .base import CameraBackend
 
 
 class FujifilmSdkBackend(CameraBackend):
-    def __init__(self, settings, *, adapter=None, repository=None):
+    def __init__(self, settings, repository):
         super().__init__()
         self.settings = settings
         self.repository = repository
 
-        self.adapter = adapter or FujifilmSdkAdapter(
+        self.adapter = FujifilmSdkAdapter(
             sdk_root=settings.camera.sdk.sdk_root,
             xapi_path=settings.camera.sdk.library_path or None,
         )
-
-        self.capture_dir = settings.captures_path
-        self.capture_dir.mkdir(parents=True, exist_ok=True)
-
-        interval_ms = settings.camera.sdk.live_view_interval_ms
 
         self.state = SessionState.STOPPED
         self._lock = threading.RLock()
@@ -33,6 +28,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._usb_present = False
         self._stopping = False
 
+        interval_ms = settings.camera.sdk.live_view_interval_ms
         self._live_interval_s = max(0.12, float(interval_ms) / 1000.0)
         self._health_interval_s = 1.0
         self._reconnect_delay_s = 1.2
@@ -46,10 +42,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._exposure_refresh_scheduled = False
         self._exposure_apply_scheduled = False
 
-        print(
-            f"[SDK] backend init adapter={self.adapter.__class__.__name__} "
-            f"capture_dir={self.capture_dir}"
-        )
+        print(f"[SDK] backend init adapter={self.adapter.__class__.__name__} ")
 
     # ------------------------------------------------------------
     # State helpers
@@ -725,7 +718,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._clear_runtime_deadlines_from_worker()
 
         try:
-            path = self.adapter.capture_photo(self.capture_dir)
+            path = self.adapter.capture_photo(self.repository.captures_dir)
         except Exception as exc:
             print(f"[SDK] capture failed: {exc}")
             self.error.emit(str(exc))
@@ -740,13 +733,12 @@ class FujifilmSdkBackend(CameraBackend):
             return
 
         self.emit_backend_state(BackendState.DOWNLOADING)
-        if self.repository is not None:
-            try:
-                path = self.repository.store(path)
-            except Exception as exc:
-                print(f"[SDK] repository.store failed: {exc}")
-                self.error.emit(str(exc))
-                return
+        try:
+            path = self.repository.store(path)
+        except Exception as exc:
+            print(f"[SDK] repository.store failed: {exc}")
+            self.error.emit(str(exc))
+            return
         self._emit_photo(path)
 
         if was_live and self._safe_is_session_open() and not self._stopping:
