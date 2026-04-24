@@ -9,9 +9,7 @@ from .base import CameraBackend
 
 
 class FujifilmSdkBackend(CameraBackend):
-    def __init__(
-        self, settings, *, adapter=None, repository=None, live_view_interval_ms=None
-    ):
+    def __init__(self, settings, *, adapter=None, repository=None):
         super().__init__()
         self.settings = settings
         self.repository = repository
@@ -24,7 +22,7 @@ class FujifilmSdkBackend(CameraBackend):
         self.capture_dir = settings.captures_path
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
-        interval_ms = live_view_interval_ms or settings.camera.sdk.live_view_interval_ms
+        interval_ms = settings.camera.sdk.live_view_interval_ms
 
         self.state = SessionState.STOPPED
         self._lock = threading.RLock()
@@ -391,7 +389,9 @@ class FujifilmSdkBackend(CameraBackend):
             print("[SDK] connect skipped: session already open")
             return
 
-        self._set_session_state(SessionState.CONNECTING, "usb present -> trying connect")
+        self._set_session_state(
+            SessionState.CONNECTING, "usb present -> trying connect"
+        )
 
         try:
             descriptor = self.adapter.connect_camera()
@@ -408,7 +408,9 @@ class FujifilmSdkBackend(CameraBackend):
         if self._try_start_live_view_from_worker("camera connected"):
             pass
         else:
-            self._set_session_state(SessionState.READY, "camera connected without live view")
+            self._set_session_state(
+                SessionState.READY, "camera connected without live view"
+            )
             self._next_health_check_at = time.monotonic() + self._health_interval_s
 
         self.camera_connected.emit(
@@ -554,7 +556,9 @@ class FujifilmSdkBackend(CameraBackend):
             return
 
         if not self._safe_is_session_open():
-            self._handle_session_lost_from_worker("health check failed", emit_signal=True)
+            self._handle_session_lost_from_worker(
+                "health check failed", emit_signal=True
+            )
 
     # ------------------------------------------------------------
     # Exposure control
@@ -569,7 +573,9 @@ class FujifilmSdkBackend(CameraBackend):
             self._enqueue_command(WorkerCommand.REFRESH_EXPOSURE)
 
     def get_exposure_data(self):
-        raise RuntimeError("Exposure data is now asynchronous. Use request_exposure_data().")
+        raise RuntimeError(
+            "Exposure data is now asynchronous. Use request_exposure_data()."
+        )
 
     def set_exposure(self, *, iso=None, shutter=None, aperture=None, ae_mode=None):
         print(
@@ -591,9 +597,7 @@ class FujifilmSdkBackend(CameraBackend):
     def _process_pending_exposure_refresh_from_worker(self):
         state = self._current_state()
         if state not in {SessionState.READY, SessionState.LIVE}:
-            print(
-                f"[SDK] exposure refresh deferred: backend state={state.name}"
-            )
+            print(f"[SDK] exposure refresh deferred: backend state={state.name}")
             self._exposure_refresh_scheduled = False
             self._schedule_pending_commands_from_worker()
             return
@@ -603,7 +607,9 @@ class FujifilmSdkBackend(CameraBackend):
         if not self._safe_is_session_open():
             self._exposure_refresh_scheduled = False
             self.exposure_data_failed.emit("Camera SDK session not open")
-            self._handle_session_lost_from_worker("async load lost session", emit_signal=True)
+            self._handle_session_lost_from_worker(
+                "async load lost session", emit_signal=True
+            )
             return
 
         was_live = state is SessionState.LIVE
@@ -625,7 +631,9 @@ class FujifilmSdkBackend(CameraBackend):
                 return
         finally:
             if was_live and self._safe_is_session_open() and not self._stopping:
-                self._try_start_live_view_from_worker("live restored after exposure query")
+                self._try_start_live_view_from_worker(
+                    "live restored after exposure query"
+                )
             elif self._safe_is_session_open() and not self._stopping:
                 self._set_session_state(SessionState.READY, "exposure query complete")
                 self._next_health_check_at = time.monotonic() + self._health_interval_s
@@ -652,7 +660,9 @@ class FujifilmSdkBackend(CameraBackend):
         if not self._safe_is_session_open():
             self._latest_exposure_request = payload
             self._exposure_apply_scheduled = False
-            self._handle_session_lost_from_worker("set_exposure: session not open", emit_signal=True)
+            self._handle_session_lost_from_worker(
+                "set_exposure: session not open", emit_signal=True
+            )
             return
 
         self.emit_backend_state(BackendState.UPDATING_CAMERA_PARAMS)
@@ -677,7 +687,9 @@ class FujifilmSdkBackend(CameraBackend):
                 return
         finally:
             if was_live and self._safe_is_session_open() and not self._stopping:
-                self._try_start_live_view_from_worker("live restored after exposure change")
+                self._try_start_live_view_from_worker(
+                    "live restored after exposure change"
+                )
             elif self._safe_is_session_open() and not self._stopping:
                 self._set_session_state(SessionState.READY, "exposure change complete")
                 self._next_health_check_at = time.monotonic() + self._health_interval_s
@@ -703,7 +715,9 @@ class FujifilmSdkBackend(CameraBackend):
             return
 
         if not self._safe_is_session_open():
-            self._handle_session_lost_from_worker("trigger_capture: session not open", emit_signal=True)
+            self._handle_session_lost_from_worker(
+                "trigger_capture: session not open", emit_signal=True
+            )
             return
 
         was_live = state is SessionState.LIVE
