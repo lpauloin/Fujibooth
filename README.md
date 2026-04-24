@@ -247,4 +247,4 @@ RemoteControlService ──► button_pressed signal ──► MainWindow
 
 ## License
 
-[Apache](LICENSE.md)
+[Apache](LICENSE)
