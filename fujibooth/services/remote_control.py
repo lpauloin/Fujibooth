@@ -23,17 +23,23 @@ import ctypes
 import hid
 import subprocess
 import threading
+from enum import Enum, auto
 
 from PySide6.QtCore import QObject, Qt, Signal
 
 from ..models.remote import RemoteButton
+
+
+class _BtnState(Enum):
+    IDLE = auto()             # no button held
+    ARMED = auto()            # ID 4 pressed, center timer running
+    DIRECTION_FIRED = auto()  # direction code received and emitted
 
 # ------------------------------------------------------------------
 # Keyboard fallback mapping (used when HID capture is not active)
 # ------------------------------------------------------------------
 
 DEFAULT_KEY_MAP = {
-    Qt.Key.Key_VolumeUp.value: RemoteButton.CAMERA,
     Qt.Key.Key_VolumeDown.value: RemoteButton.PHOTO,
     Qt.Key.Key_Up.value: RemoteButton.UP,
     Qt.Key.Key_Down.value: RemoteButton.DOWN,
@@ -55,8 +61,7 @@ QT_KEY_NAMES = {v.value: v.name for v in Qt.Key if isinstance(v.value, int)}
 # ------------------------------------------------------------------
 BEAUTY_R1_REPORT_MAP = {
     # Report ID 3 — consumer control bits
-    (3, 0, 0x01): RemoteButton.CAMERA,   # Volume Increment
-    (3, 0, 0x02): RemoteButton.PHOTO,    # Volume Decrement
+    (3, 0, 0x02): RemoteButton.PHOTO,  # Volume Decrement
     # Report ID 5 — directional codes (sustained code repeated 3× after the ID 4 click)
     # CENTER is handled via a 150ms debounce timer — not in this map
     (5, "word", 0xC000): RemoteButton.UP,
@@ -181,7 +186,8 @@ class RemoteControlService(QObject):
         self._hid_capture = None
         self._hid_monitor_thread = None
         self._hid_stop = threading.Event()
-        self._last_report = {}
+        self._consumer_bits = {}  # dedup for report ID 3 consumer bits
+        self._btn_state = _BtnState.IDLE
         self._center_timer = None
         self._center_lock = threading.Lock()
 
@@ -273,32 +279,27 @@ class RemoteControlService(QObject):
             return None
 
         if report_id == 3:
+            # Consumer control bits — PHOTO button lives here
             byte0 = data[0]
             for mask in (0x01, 0x02, 0x04, 0x08, 0x10):
                 if byte0 & mask:
                     btn = BEAUTY_R1_REPORT_MAP.get((3, 0, mask))
-                    if btn:
-                        key = (3, mask)
-                        if not self._last_report.get(key):
-                            self._last_report[key] = True
-                            return btn
+                    if btn and not self._consumer_bits.get(mask):
+                        self._consumer_bits[mask] = True
+                        return btn
                 else:
-                    self._last_report[(3, mask)] = False
+                    self._consumer_bits[mask] = False
 
         elif report_id == 4:
+            # Mouse button — drives the IDLE → ARMED → IDLE state machine
             btn1 = bool(data[0] & 0x01)
-            btn1_was = self._last_report.get((4, "btn1"), False)
-
-            if btn1 and not btn1_was:
-                # button 1 just pressed → arm CENTER unless a direction code follows
-                self._last_report[(4, "btn1")] = True
+            if btn1 and self._btn_state is _BtnState.IDLE:
+                self._btn_state = _BtnState.ARMED
+                print(f"[BTN] IDLE → ARMED")
                 self._arm_pending_center()
-            elif not btn1 and btn1_was:
-                # button 1 released → reset direction state for next press
-                self._last_report[(4, "btn1")] = False
-                for k in list(self._last_report):
-                    if isinstance(k, tuple) and k[0] == 5:
-                        self._last_report[k] = False
+            elif not btn1 and self._btn_state is not _BtnState.IDLE:
+                self._btn_state = _BtnState.IDLE
+                print(f"[BTN] → IDLE")
 
             wheel = ctypes.c_int8(data[1] if len(data) > 1 else 0).value
             if wheel:
@@ -309,15 +310,15 @@ class RemoteControlService(QObject):
                     return btn
 
         elif report_id == 5 and len(data) >= 2:
+            # Direction codes — only accepted in ARMED state (one direction per press)
             code = data[0] | (data[1] << 8)
-            if code:
+            if code and self._btn_state is _BtnState.ARMED:
                 btn = BEAUTY_R1_REPORT_MAP.get((5, "word", code))
                 if btn:
-                    key = (5, code)
-                    if not self._last_report.get(key):
-                        self._last_report[key] = True
-                        self._cancel_pending_center()
-                        return btn
+                    self._btn_state = _BtnState.DIRECTION_FIRED
+                    print(f"[BTN] ARMED → DIRECTION_FIRED ({btn.name})")
+                    self._cancel_pending_center()
+                    return btn
 
         return None
 

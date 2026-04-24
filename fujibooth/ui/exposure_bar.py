@@ -1,4 +1,4 @@
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -59,8 +59,12 @@ SEPARATOR_STYLE = (
 class ExposureColumn(QWidget):
     def __init__(self, label_text, placeholder_text):
         super().__init__()
+        self.setObjectName("ExposureColumn")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._apply_border("transparent")
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
         header = QLabel(label_text)
@@ -72,6 +76,23 @@ class ExposureColumn(QWidget):
         self.combo.setPlaceholderText(placeholder_text)
         self.combo.setStyleSheet(COMBO_STYLE)
         layout.addWidget(self.combo)
+
+    def _apply_border(self, color, width=2):
+        self.setStyleSheet(
+            f"QWidget#ExposureColumn {{"
+            f"  border: {width}px solid {color};"
+            f"  border-radius: 10px;"
+            f"  background: transparent;"
+            f"}}"
+        )
+
+    def set_focused(self, focused, editing=False):
+        if editing:
+            self._apply_border("#ef4444", width=3)
+        elif focused:
+            self._apply_border("#dc2626", width=2)
+        else:
+            self._apply_border("transparent")
 
 
 class ExposureBarWidget(QWidget):
@@ -87,6 +108,7 @@ class ExposureBarWidget(QWidget):
             "}"
         )
         self.setObjectName("ExposureBar")
+        self._columns = []
         self._setup_ui()
 
     def _setup_ui(self):
@@ -99,6 +121,8 @@ class ExposureBarWidget(QWidget):
         shutter_col = ExposureColumn("SHUTTER", "AUTO")
         aperture_col = ExposureColumn("APERTURE", "AUTO")
 
+        self._columns = [ae_col, iso_col, shutter_col, aperture_col]
+
         self.ae_mode_combo = ae_col.combo
         self.iso_combo = iso_col.combo
         self.shutter_combo = shutter_col.combo
@@ -109,7 +133,7 @@ class ExposureBarWidget(QWidget):
         self.shutter_combo.activated.connect(lambda _: self.changed.emit("shutter"))
         self.aperture_combo.activated.connect(lambda _: self.changed.emit("aperture"))
 
-        for i, col in enumerate([ae_col, iso_col, shutter_col, aperture_col]):
+        for i, col in enumerate(self._columns):
             layout.addWidget(col)
             if i < 3:
                 sep = QFrame()
@@ -126,3 +150,15 @@ class ExposureBarWidget(QWidget):
         self.iso_combo.setEnabled(enabled)
         self.shutter_combo.setEnabled(enabled)
         self.aperture_combo.setEnabled(enabled)
+
+    def set_focused_control(self, index):
+        """Highlight the control at index with a red border (-1 = clear all)."""
+        print(f"[EXPOSURE] set_focused_control index={index}")
+        for i, col in enumerate(self._columns):
+            col.set_focused(i == index)
+
+    def set_editing(self, index, editing):
+        """Show an editing (brighter) border on the control being modified."""
+        print(f"[EXPOSURE] set_editing index={index} editing={editing}")
+        for i, col in enumerate(self._columns):
+            col.set_focused(i == index, editing=(i == index and editing))

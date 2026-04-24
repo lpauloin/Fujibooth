@@ -198,26 +198,31 @@ class LiveViewWidget(QFrame):
 class ThumbnailButton(QPushButton):
     photo_clicked = Signal(str)
 
+    _STYLE_NORMAL = """
+        QPushButton {
+            border: 2px solid #333333;
+            border-radius: 12px;
+            background: #151515;
+            padding: 0px;
+        }
+        QPushButton:hover { border: 2px solid #666666; }
+        QPushButton:pressed { border: 2px solid #aaaaaa; }
+    """
+    _STYLE_SELECTED = """
+        QPushButton {
+            border: 3px solid #dc2626;
+            border-radius: 12px;
+            background: #1a0808;
+            padding: 0px;
+        }
+    """
+
     def __init__(self, photo_path, width, height):
         super().__init__()
         self.photo_path = photo_path
-
         self.setFixedSize(width, height)
         self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet("""
-            QPushButton {
-                border: 2px solid #333333;
-                border-radius: 12px;
-                background: #151515;
-                padding: 0px;
-            }
-            QPushButton:hover {
-                border: 2px solid #666666;
-            }
-            QPushButton:pressed {
-                border: 2px solid #aaaaaa;
-            }
-            """)
+        self.setStyleSheet(self._STYLE_NORMAL)
 
         pixmap = QPixmap(str(photo_path))
         if not pixmap.isNull():
@@ -231,6 +236,9 @@ class ThumbnailButton(QPushButton):
 
         self.clicked.connect(lambda: self.photo_clicked.emit(str(self.photo_path)))
 
+    def set_remote_selected(self, selected):
+        self.setStyleSheet(self._STYLE_SELECTED if selected else self._STYLE_NORMAL)
+
 
 class GalleryWidget(QWidget):
     photo_selected = Signal(str)
@@ -239,6 +247,7 @@ class GalleryWidget(QWidget):
         super().__init__()
         self.thumb_w = thumb_w
         self.thumb_h = thumb_h
+        self._thumbs = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -260,12 +269,12 @@ class GalleryWidget(QWidget):
         self._reset_layout()
 
     def _reset_layout(self):
+        self._thumbs = []
         while self.layout.count():
             item = self.layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-
         self.layout.addStretch(1)
 
     def get_horizontal_scrollbar(self):
@@ -273,7 +282,6 @@ class GalleryWidget(QWidget):
 
     def set_photos(self, photos):
         self._reset_layout()
-
         if not photos:
             return
 
@@ -285,5 +293,19 @@ class GalleryWidget(QWidget):
             thumb = ThumbnailButton(photo, self.thumb_w, self.thumb_h)
             thumb.photo_clicked.connect(self.photo_selected)
             self.layout.addWidget(thumb)
+            self._thumbs.append(thumb)
 
         self.layout.addStretch(1)
+
+    def set_remote_selection(self, index):
+        """Highlight thumbnail at index with a red border (-1 = clear all)."""
+        for i, thumb in enumerate(self._thumbs):
+            thumb.set_remote_selected(i == index)
+
+    def find_photo_index(self, photo_path):
+        """Return the position of photo_path in current thumbs, -1 if not found."""
+        target = str(photo_path)
+        for i, thumb in enumerate(self._thumbs):
+            if str(thumb.photo_path) == target:
+                return i
+        return -1

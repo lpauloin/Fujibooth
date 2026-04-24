@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..backends.fujifilm_sdk_backend import FujifilmSdkBackend
-from ..models.remote import RemoteButton
+from ..models.remote import RemoteButton, RemoteFocus
 from ..models.state import BackendState, BoothState
 from ..services.photo_repository import PhotoRepository
 from ..services.printer import PrintService
@@ -94,7 +94,10 @@ class MainWindow(QMainWindow):
         self._usb_monitor_started = False
         self._camera_connected = False
         self._camera_label = "FUJIFILM"
-        self._remote_gallery_index: int = -1  # -1 = no remote selection active
+        self._remote_focus = RemoteFocus.SLIDESHOW
+        self._remote_gallery_index = -1
+        self._remote_control_index = 0
+        self._remote_in_setting = False
 
         self.setWindowTitle(settings.app.window_title)
         self.setStyleSheet(f"background: {settings.ui.background_color}; color: white;")
@@ -412,7 +415,9 @@ class MainWindow(QMainWindow):
             if rc.hid_vendor_id and rc.hid_product_id:
                 self.remote.start_hid_capture(rc.hid_vendor_id, rc.hid_product_id)
             else:
-                print("[REMOTE] hid_vendor_id/hid_product_id not set — HID capture disabled")
+                print(
+                    "[REMOTE] hid_vendor_id/hid_product_id not set — HID capture disabled"
+                )
 
         if self.settings.app.fullscreen:
             self.showFullScreen()
@@ -471,58 +476,153 @@ class MainWindow(QMainWindow):
 
     @Slot(RemoteButton)
     def _on_remote_button(self, button):
-        print(f"[UI] remote button={button.name} state={self.state}")
+        print(
+            f"[UI] remote button={button.name} state={self.state} focus={self._remote_focus.name} in_setting={self._remote_in_setting}"
+        )
 
         _busy = {BoothState.COUNTDOWN, BoothState.CAPTURING, BoothState.DOWNLOADING}
         if self.state in _busy:
             return
 
-        match button:
-            case RemoteButton.CAMERA | RemoteButton.PHOTO | RemoteButton.CENTER if (
-                self.state is BoothState.LIVE_VIEW
-            ):
+        # ── UP / DOWN : switch focus or navigate inside a setting ──────────
+        if button is RemoteButton.UP:
+            if self._remote_in_setting:
+                self._remote_setting_navigate(-1)
+            elif self.state is BoothState.LIVE_VIEW and self._camera_connected:
+                self._switch_remote_focus(RemoteFocus.CONTROLS)
+            return
+
+        if button is RemoteButton.DOWN:
+            if self._remote_in_setting:
+                self._remote_setting_navigate(1)
+            elif self.state is BoothState.LIVE_VIEW and self._camera_connected:
+                self._switch_remote_focus(RemoteFocus.SLIDESHOW)
+            return
+
+        # ── LEFT / RIGHT : navigate gallery or controls ────────────────────
+        if button is RemoteButton.LEFT:
+            if not self._remote_in_setting:
+                if self._remote_focus is RemoteFocus.SLIDESHOW:
+                    self._remote_gallery_navigate(-1)
+                elif self._remote_focus is RemoteFocus.CONTROLS:
+                    self._remote_control_navigate(-1)
+            return
+
+        if button is RemoteButton.RIGHT:
+            if not self._remote_in_setting:
+                if self._remote_focus is RemoteFocus.SLIDESHOW:
+                    self._remote_gallery_navigate(1)
+                elif self._remote_focus is RemoteFocus.CONTROLS:
+                    self._remote_control_navigate(1)
+            return
+
+        # ── CENTER : open / confirm a setting ─────────────────────────────
+        if button is RemoteButton.CENTER:
+            if self._remote_focus is RemoteFocus.CONTROLS:
+                if self._remote_in_setting:
+                    self._remote_setting_confirm()
+                else:
+                    self._remote_open_setting()
+            return
+
+        # ── PHOTO : capture in live view, print when a photo is selected ───
+        if button is RemoteButton.PHOTO:
+            if self.state is BoothState.LIVE_VIEW:
                 self.start_countdown()
-
-            case RemoteButton.LEFT if self.state not in {BoothState.WAITING_FOR_CAMERA}:
-                self._remote_gallery_navigate(-1)
-
-            case RemoteButton.RIGHT if self.state not in {
-                BoothState.WAITING_FOR_CAMERA
-            }:
-                self._remote_gallery_navigate(1)
-
-            case RemoteButton.PHOTO if self.state in {
-                BoothState.FREEZE,
-                BoothState.PHOTO_SELECTED,
-            }:
+            elif self.state in {BoothState.FREEZE, BoothState.PHOTO_SELECTED}:
                 self.on_print_clicked()
+            return
 
-            case RemoteButton.CENTER if self.state in {
-                BoothState.FREEZE,
-                BoothState.PHOTO_SELECTED,
-            }:
-                self.on_print_clicked()
+    # ------------------------------------------------------------------
+    # Remote focus / navigation helpers
+    # ------------------------------------------------------------------
 
-            case RemoteButton.CAMERA if self.state in {
-                BoothState.FREEZE,
-                BoothState.PHOTO_SELECTED,
-            }:
-                self._return_to_live_view()
+    def _switch_remote_focus(self, focus):
+        self._remote_focus = focus
+        self._remote_in_setting = False
+        if focus is RemoteFocus.SLIDESHOW:
+            self.exposure_bar.set_focused_control(-1)
+            if self._remote_gallery_index >= 0:
+                self.gallery.set_remote_selection(self._remote_gallery_index)
+        else:
+            self.gallery.set_remote_selection(-1)
+            self.exposure_bar.set_focused_control(self._remote_control_index)
+        print(f"[UI] remote focus → {focus.name}")
 
     def _remote_gallery_navigate(self, delta):
         photos = self.repository.recent(limit=50)
         if not photos:
             return
-
         if self._remote_gallery_index < 0:
-            # Start at the most recent photo
             self._remote_gallery_index = len(photos) - 1
         else:
             self._remote_gallery_index = max(
                 0, min(len(photos) - 1, self._remote_gallery_index + delta)
             )
-
         self.on_photo_selected(str(photos[self._remote_gallery_index]))
+        self.return_timer.stop()
+        self.print_button_timer.stop()
+        self.print_button.hide()
+
+    def _remote_control_navigate(self, delta):
+        combos = [
+            self.ae_mode_combo,
+            self.iso_combo,
+            self.shutter_combo,
+            self.aperture_combo,
+        ]
+        enabled = [i for i, c in enumerate(combos) if c.isEnabled() and c.count() > 0]
+        if not enabled:
+            return
+        try:
+            pos = enabled.index(self._remote_control_index)
+        except ValueError:
+            pos = 0
+        self._remote_control_index = enabled[(pos + delta) % len(enabled)]
+        self.exposure_bar.set_focused_control(self._remote_control_index)
+
+    def _remote_open_setting(self):
+        combos = [
+            self.ae_mode_combo,
+            self.iso_combo,
+            self.shutter_combo,
+            self.aperture_combo,
+        ]
+        if not combos[self._remote_control_index].isEnabled():
+            return
+        self._remote_in_setting = True
+        self.exposure_bar.set_editing(self._remote_control_index, True)
+        print(f"[UI] remote: editing control {self._remote_control_index}")
+
+    def _remote_setting_navigate(self, delta):
+        combos = [
+            self.ae_mode_combo,
+            self.iso_combo,
+            self.shutter_combo,
+            self.aperture_combo,
+        ]
+        combo = combos[self._remote_control_index]
+        if not combo.isEnabled() or combo.count() == 0:
+            return
+        new_index = (combo.currentIndex() + delta) % combo.count()
+        combo.blockSignals(True)
+        combo.setCurrentIndex(new_index)
+        combo.blockSignals(False)
+
+    def _remote_setting_confirm(self):
+        self._remote_in_setting = False
+        self.exposure_bar.set_editing(self._remote_control_index, False)
+        field = ["ae_mode", "iso", "shutter", "aperture"][self._remote_control_index]
+        print(f"[UI] remote: confirmed {field}")
+        self.on_exposure_changed(field)
+
+    def _reset_remote_state(self):
+        self._remote_focus = RemoteFocus.SLIDESHOW
+        self._remote_gallery_index = -1
+        self._remote_control_index = 0
+        self._remote_in_setting = False
+        self.gallery.set_remote_selection(-1)
+        self.exposure_bar.set_focused_control(-1)
 
     @Slot()
     def start_countdown(self):
@@ -543,6 +643,7 @@ class MainWindow(QMainWindow):
             print("[UI] start_countdown aborted: no camera connected")
             return
 
+        self._reset_remote_state()
         self._set_state(BoothState.COUNTDOWN)
         self.selected_photo = None
         self.print_button.hide()
@@ -771,7 +872,7 @@ class MainWindow(QMainWindow):
         self.return_timer.stop()
         self.print_button_timer.stop()
         self.print_button.hide()
-        self._remote_gallery_index = -1
+        self._reset_remote_state()
 
         if self._camera_connected:
             self._set_state(BoothState.LIVE_VIEW)
@@ -805,6 +906,10 @@ class MainWindow(QMainWindow):
         self.return_timer.stop()
 
         self.selected_photo = Path(photo_path_str)
+        idx = self.gallery.find_photo_index(self.selected_photo)
+        self._remote_gallery_index = idx
+        self.gallery.set_remote_selection(idx)
+
         pixmap = QPixmap(str(self.selected_photo))
         if not pixmap.isNull():
             self.live_view.hide_overlay()
@@ -930,6 +1035,9 @@ class MainWindow(QMainWindow):
         self._camera_connected = False
         self._camera_label = "FUJIFILM"
         self._loading_exposure_controls = False
+        self._remote_focus = RemoteFocus.SLIDESHOW
+        self._remote_in_setting = False
+        self.exposure_bar.set_focused_control(-1)
         self._set_exposure_controls_enabled(False)
         self.ae_mode_combo.clear()
         self.iso_combo.clear()

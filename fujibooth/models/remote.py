@@ -7,5 +7,9 @@ class RemoteButton(Enum):
     LEFT = auto()
     RIGHT = auto()
     CENTER = auto()
-    CAMERA = auto()  # camera-icon button (middle row)
-    PHOTO = auto()  # photo button (bottom row)
+    PHOTO = auto()
+
+
+class RemoteFocus(Enum):
+    SLIDESHOW = auto()
+    CONTROLS = auto()
