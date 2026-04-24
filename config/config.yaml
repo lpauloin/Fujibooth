@@ -28,6 +28,12 @@ printing:
   enabled: false
   command: ""
 
+remote:
+  enabled: true
+  hid_device_name: "Beauty-R1"   # paired as BLE keyboard (Minor Type: Keyboard)
+  # Key mapping is logged at runtime: watch for "[REMOTE] unmapped key=..." lines
+  # to identify button codes, then override DEFAULT_KEY_MAP if needed.
+
 ui:
   background_color: "#111111"
   status_connected_color: "#16a34a"

@@ -1,16 +1,14 @@
-from __future__ import annotations
-
 from pathlib import Path
 import shlex
 import subprocess
 
 
 class PrintService:
-    def __init__(self, enabled: bool, command: str) -> None:
+    def __init__(self, enabled, command):
         self.enabled = enabled
         self.command = command.strip()
 
-    def print_photo(self, photo_path: Path) -> tuple[bool, str]:
+    def print_photo(self, photo_path):
         if not photo_path.exists():
             return False, f"Photo introuvable: {photo_path}"
         if not self.enabled:

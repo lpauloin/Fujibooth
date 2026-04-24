@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import signal
 import sys
 
@@ -10,7 +8,7 @@ from .config import load_settings
 from .ui.main_window import MainWindow
 
 
-def main() -> int:
+def main():
     print('[APP] demarrage application')
     settings = load_settings()
 

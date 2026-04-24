@@ -121,7 +121,7 @@ class ExposureBarWidget(QWidget):
 
         layout.addStretch(1)
 
-    def set_controls_enabled(self, enabled: bool):
+    def set_controls_enabled(self, enabled):
         self.ae_mode_combo.setEnabled(enabled)
         self.iso_combo.setEnabled(enabled)
         self.shutter_combo.setEnabled(enabled)

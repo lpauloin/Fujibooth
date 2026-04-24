@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from PySide6.QtCore import QObject, Signal
 
 from ..models.state import BackendState
@@ -15,32 +13,32 @@ class CameraBackend(QObject):
     exposure_data_ready = Signal(object)
     exposure_data_failed = Signal(str)
 
-    def start(self) -> None:
+    def start(self):
         raise NotImplementedError
 
-    def stop(self) -> None:
+    def stop(self):
         raise NotImplementedError
 
-    def is_connected(self) -> bool:
+    def is_connected(self):
         raise NotImplementedError
 
-    def connect_camera(self) -> None:
+    def connect_camera(self):
         raise NotImplementedError
 
-    def disconnect_camera(self) -> None:
+    def disconnect_camera(self):
         raise NotImplementedError
 
-    def start_live_view(self) -> None:
+    def start_live_view(self):
         raise NotImplementedError
 
-    def stop_live_view(self) -> None:
+    def stop_live_view(self):
         raise NotImplementedError
 
-    def trigger_capture(self) -> None:
+    def trigger_capture(self):
         raise NotImplementedError
 
-    def emit_backend_state(self, state: BackendState) -> None:
+    def emit_backend_state(self, state):
         self.state_changed.emit(state)
 
-    def _emit_photo(self, path: Path) -> None:
+    def _emit_photo(self, path):
         self.photo_captured.emit(str(path))

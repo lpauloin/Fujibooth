@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime
 from pathlib import Path
 import shutil
@@ -41,7 +39,7 @@ class PhotoRepository:
             print(f"[REPO] _apply_frame error: {exc}")
             return False
 
-    def store(self, source_path: Path) -> Path:
+    def store(self, source_path):
         suffix = source_path.suffix.lower()
         if suffix not in self.extensions:
             raise ValueError(f"Unsupported file extension: {source_path.suffix}")
@@ -63,7 +61,7 @@ class PhotoRepository:
 
         return target
 
-    def recent(self, limit: int = 50) -> list[Path]:
+    def recent(self, limit=50):
         photos = [
             path
             for path in self.output_dir.iterdir()
@@ -74,7 +72,7 @@ class PhotoRepository:
         photos.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return photos[:limit]
 
-    def _is_displayable(self, path: Path):
+    def _is_displayable(self, path):
         if self._has_frame:
             return path.stem.endswith(FRAMED_SUFFIX)
         return not path.stem.endswith(FRAMED_SUFFIX)

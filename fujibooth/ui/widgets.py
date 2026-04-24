@@ -1,7 +1,3 @@
-from __future__ import annotations
-
-from pathlib import Path
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QMouseEvent, QPixmap, QResizeEvent, QWheelEvent
 from PySide6.QtWidgets import (
@@ -19,14 +15,14 @@ from PySide6.QtWidgets import (
 class ClickableLabel(QLabel):
     clicked = Signal()
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:
+    def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
 
 
 class FastHorizontalScrollArea(QScrollArea):
-    def wheelEvent(self, event: QWheelEvent) -> None:
+    def wheelEvent(self, event):
         scrollbar = self.horizontalScrollBar()
         delta = event.angleDelta().y() or event.angleDelta().x()
 
@@ -43,21 +39,19 @@ class FastHorizontalScrollArea(QScrollArea):
 class LiveViewWidget(QFrame):
     clicked = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.setFrameShape(QFrame.NoFrame)
         self.setObjectName("LiveViewWidget")
         self._pixmap = QPixmap()
         self._freeze_frame = False
 
-        self.setStyleSheet(
-            """
+        self.setStyleSheet("""
             QFrame#LiveViewWidget {
                 background: transparent;
                 border: none;
             }
-            """
-        )
+            """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -78,43 +72,48 @@ class LiveViewWidget(QFrame):
         self.status_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.status_badge.hide()
 
+        self.remote_badge = QLabel(self.image_label)
+        self.remote_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.remote_badge.hide()
+
         self.image_label.clicked.connect(self.clicked)
         self._apply_frame_style()
 
-    def resizeEvent(self, event: QResizeEvent) -> None:
+    def resizeEvent(self, event):
         super().resizeEvent(event)
         self.overlay.setGeometry(self.image_label.rect())
         self._update_status_badge_position()
         self._render_pixmap()
 
-    def _apply_frame_style(self) -> None:
+    def _apply_frame_style(self):
         border = "10px solid #2f80ff" if self._freeze_frame else "none"
-        self.image_label.setStyleSheet(
-            f"""
+        self.image_label.setStyleSheet(f"""
             QLabel {{
                 background: #000000;
                 border-radius: 18px;
                 border: {border};
             }}
-            """
-        )
+            """)
 
-    def set_freeze_frame(self, enabled: bool) -> None:
+    def set_freeze_frame(self, enabled):
         self._freeze_frame = enabled
         self._apply_frame_style()
 
-    def _update_status_badge_position(self) -> None:
-        if self.status_badge.isHidden():
-            return
-        self.status_badge.adjustSize()
-        self.status_badge.move(20, 20)
-        self.status_badge.raise_()
+    def _update_status_badge_position(self):
+        y = 20
+        for badge in (self.status_badge, self.remote_badge):
+            if badge.isHidden():
+                continue
+            badge.adjustSize()
+            badge.move(20, y)
+            badge.raise_()
+            y += badge.height() + 8
 
-    def set_pixmap(self, pixmap: QPixmap) -> None:
+    def set_pixmap(self, pixmap):
         self._pixmap = pixmap
         self._render_pixmap()
 
-    def _render_pixmap(self) -> None:
+    def _render_pixmap(self):
         if self._pixmap.isNull():
             self.image_label.clear()
             return
@@ -129,15 +128,9 @@ class LiveViewWidget(QFrame):
         )
         self.image_label.setPixmap(scaled)
 
-    def show_overlay_text(
-        self,
-        text: str,
-        font_px: int = 110,
-        background: str = "rgba(0,0,0,0.55)",
-    ) -> None:
+    def show_overlay_text(self, text, font_px=110, background="rgba(0,0,0,0.55)"):
         self.overlay.setText(text)
-        self.overlay.setStyleSheet(
-            f"""
+        self.overlay.setStyleSheet(f"""
             QLabel {{
                 background: {background};
                 color: white;
@@ -145,25 +138,23 @@ class LiveViewWidget(QFrame):
                 font-weight: 900;
                 border-radius: 18px;
             }}
-            """
-        )
+            """)
         self.overlay.setGeometry(self.image_label.rect())
         self.overlay.show()
         self.overlay.raise_()
 
-    def hide_overlay(self) -> None:
+    def hide_overlay(self):
         self.overlay.hide()
         self.overlay.clear()
 
-    def set_status(self, text: str, color: str) -> None:
+    def set_status(self, text, color):
         text = (text or "").strip()
         if not text:
             self.clear_status()
             return
 
         self.status_badge.setText(text)
-        self.status_badge.setStyleSheet(
-            f"""
+        self.status_badge.setStyleSheet(f"""
             QLabel {{
                 background: {color};
                 color: white;
@@ -172,29 +163,48 @@ class LiveViewWidget(QFrame):
                 font-size: 16px;
                 font-weight: 800;
             }}
-            """
-        )
+            """)
         self.status_badge.adjustSize()
-        self.status_badge.move(20, 20)
+        self._update_status_badge_position()
         self.status_badge.show()
         self.status_badge.raise_()
 
-    def clear_status(self) -> None:
+    def clear_status(self):
         self.status_badge.clear()
         self.status_badge.hide()
+        self._update_status_badge_position()
+
+    def set_remote_status(self, text, color):
+        self.remote_badge.setText((text or "").strip())
+        self.remote_badge.setStyleSheet(f"""
+            QLabel {{
+                background: {color};
+                color: white;
+                padding: 8px 14px;
+                border-radius: 12px;
+                font-size: 16px;
+                font-weight: 800;
+            }}
+            """)
+        self.remote_badge.show()
+        self._update_status_badge_position()
+
+    def clear_remote_status(self):
+        self.remote_badge.clear()
+        self.remote_badge.hide()
+        self._update_status_badge_position()
 
 
 class ThumbnailButton(QPushButton):
     photo_clicked = Signal(str)
 
-    def __init__(self, photo_path: Path, width: int, height: int) -> None:
+    def __init__(self, photo_path, width, height):
         super().__init__()
         self.photo_path = photo_path
 
         self.setFixedSize(width, height)
         self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet(
-            """
+        self.setStyleSheet("""
             QPushButton {
                 border: 2px solid #333333;
                 border-radius: 12px;
@@ -207,8 +217,7 @@ class ThumbnailButton(QPushButton):
             QPushButton:pressed {
                 border: 2px solid #aaaaaa;
             }
-            """
-        )
+            """)
 
         pixmap = QPixmap(str(photo_path))
         if not pixmap.isNull():
@@ -226,7 +235,7 @@ class ThumbnailButton(QPushButton):
 class GalleryWidget(QWidget):
     photo_selected = Signal(str)
 
-    def __init__(self, thumb_w: int, thumb_h: int) -> None:
+    def __init__(self, thumb_w, thumb_h):
         super().__init__()
         self.thumb_w = thumb_w
         self.thumb_h = thumb_h
@@ -250,7 +259,7 @@ class GalleryWidget(QWidget):
 
         self._reset_layout()
 
-    def _reset_layout(self) -> None:
+    def _reset_layout(self):
         while self.layout.count():
             item = self.layout.takeAt(0)
             widget = item.widget()
@@ -262,7 +271,7 @@ class GalleryWidget(QWidget):
     def get_horizontal_scrollbar(self):
         return self.scroll.horizontalScrollBar()
 
-    def set_photos(self, photos: list[Path]) -> None:
+    def set_photos(self, photos):
         self._reset_layout()
 
         if not photos:

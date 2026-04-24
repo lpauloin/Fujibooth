@@ -1,8 +1,5 @@
-from __future__ import annotations
-
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
 import os
 
 import yaml
@@ -55,6 +52,14 @@ class PrintingConfig:
 
 
 @dataclass(slots=True)
+class RemoteConfig:
+    enabled: bool = False
+    hid_device_name: str = ""
+    hid_vendor_id: int = 0
+    hid_product_id: int = 0
+
+
+@dataclass(slots=True)
 class UiConfig:
     background_color: str = "#111111"
     status_connected_color: str = "#16a34a"
@@ -71,28 +76,29 @@ class Settings:
     storage: StorageConfig = field(default_factory=StorageConfig)
     printing: PrintingConfig = field(default_factory=PrintingConfig)
     ui: UiConfig = field(default_factory=UiConfig)
+    remote: RemoteConfig = field(default_factory=RemoteConfig)
     config_path: Path | None = None
 
     @property
-    def output_path(self) -> Path:
+    def output_path(self):
         return Path(os.path.expanduser(self.storage.output_dir)).resolve()
 
     @property
-    def incoming_path(self) -> Path:
+    def incoming_path(self):
         return Path(os.path.expanduser(self.storage.incoming_dir)).resolve()
 
     @property
-    def sdk_capture_path(self) -> Path:
+    def sdk_capture_path(self):
         return Path(os.path.expanduser(self.camera.sdk.capture_dir)).resolve()
 
     @property
-    def frame_path(self) -> Path | None:
+    def frame_path(self):
         if not self.storage.frame_path:
             return None
         return Path(os.path.expanduser(self.storage.frame_path)).resolve()
 
 
-def _merge_dict(defaults: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+def _merge_dict(defaults, override):
     merged = dict(defaults)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -102,11 +108,11 @@ def _merge_dict(defaults: dict[str, Any], override: dict[str, Any]) -> dict[str,
     return merged
 
 
-def _dataclass_to_dict(settings: Settings) -> dict[str, Any]:
+def _dataclass_to_dict(settings):
     return asdict(settings) | {"config_path": settings.config_path}
 
 
-def build_settings(payload: dict[str, Any], config_path: Path | None = None) -> Settings:
+def build_settings(payload, config_path=None):
     defaults = _dataclass_to_dict(Settings())
     merged = _merge_dict(defaults, payload)
     settings = Settings(
@@ -118,6 +124,7 @@ def build_settings(payload: dict[str, Any], config_path: Path | None = None) -> 
         storage=StorageConfig(**merged["storage"]),
         printing=PrintingConfig(**merged["printing"]),
         ui=UiConfig(**merged["ui"]),
+        remote=RemoteConfig(**merged["remote"]),
         config_path=config_path,
     )
     settings.output_path.mkdir(parents=True, exist_ok=True)
@@ -126,7 +133,7 @@ def build_settings(payload: dict[str, Any], config_path: Path | None = None) -> 
     return settings
 
 
-def default_config_candidates() -> list[Path]:
+def default_config_candidates():
     return [
         Path.cwd() / "config.yaml",
         Path.cwd() / "config" / "config.yaml",
@@ -134,7 +141,7 @@ def default_config_candidates() -> list[Path]:
     ]
 
 
-def load_settings(config_path: str | Path | None = None) -> Settings:
+def load_settings(config_path=None):
     candidates = [Path(config_path)] if config_path else default_config_candidates()
     for candidate in candidates:
         if candidate.exists():

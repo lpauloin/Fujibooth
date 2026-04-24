@@ -1,11 +1,8 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
 import ctypes
 import ctypes.util
 import threading
 import time
-from typing import Any
+from dataclasses import dataclass
 
 import usb.core
 import usb.backend.libusb1
@@ -29,7 +26,7 @@ class USBMonitor(QObject):
     LIBUSB_HOTPLUG_MATCH_ANY = -1
     LIBUSB_CAP_HAS_HOTPLUG = 1
 
-    def __init__(self, config: USBMonitorConfig, poll_interval_ms: int = 1500) -> None:
+    def __init__(self, config, poll_interval_ms=1500):
         super().__init__()
         self.config = config
 
@@ -38,7 +35,7 @@ class USBMonitor(QObject):
         self._libusb = None
         self._ctx = None
         self._callback_handle = ctypes.c_int()
-        self._event_thread: threading.Thread | None = None
+        self._event_thread = None
         self._event_thread_stop = threading.Event()
         self._hotplug_active = False
 
@@ -57,7 +54,7 @@ class USBMonitor(QObject):
     # lifecycle
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
+    def start(self):
         print("[USB-MONITOR] start()")
 
         if self._try_start_libusb_hotplug():
@@ -69,7 +66,7 @@ class USBMonitor(QObject):
         self._poll_once()
         self._poll_timer.start()
 
-    def stop(self) -> None:
+    def stop(self):
         print("[USB-MONITOR] stop()")
 
         self._poll_timer.stop()
@@ -79,7 +76,7 @@ class USBMonitor(QObject):
     # normalization
     # ------------------------------------------------------------------
 
-    def _normalize_hex(self, value: str | int | None) -> int | None:
+    def _normalize_hex(self, value):
         if value is None:
             return None
         if isinstance(value, int):
@@ -91,11 +88,11 @@ class USBMonitor(QObject):
         return int(text, 16)
 
     @property
-    def _vendor_id(self) -> int | None:
+    def _vendor_id(self):
         return self._normalize_hex(self.config.vendor_id)
 
     @property
-    def _product_ids(self) -> set[int]:
+    def _product_ids(self):
         return {
             value
             for value in (self._normalize_hex(p) for p in self.config.product_ids)
@@ -103,19 +100,19 @@ class USBMonitor(QObject):
         }
 
     @property
-    def _name_hint(self) -> str:
+    def _name_hint(self):
         return (self.config.camera_name_contains or "").strip().lower()
 
     # ------------------------------------------------------------------
     # polling mode
     # ------------------------------------------------------------------
 
-    def _poll_once(self) -> None:
+    def _poll_once(self):
         print("[USB-MONITOR] _poll_once()")
         payload = self._find_camera_payload()
         self._update_connection_state(payload)
 
-    def _emit_initial_state(self) -> None:
+    def _emit_initial_state(self):
         print("[USB-MONITOR] _emit_initial_state()")
         payload = self._find_camera_payload()
         self._update_connection_state(payload)
@@ -124,7 +121,7 @@ class USBMonitor(QObject):
     # hotplug mode
     # ------------------------------------------------------------------
 
-    def _try_start_libusb_hotplug(self) -> bool:
+    def _try_start_libusb_hotplug(self):
         try:
             libusb_path = ctypes.util.find_library("usb-1.0")
             print(f"[USB-MONITOR] libusb path={libusb_path}")
@@ -137,19 +134,15 @@ class USBMonitor(QObject):
                 print("[USB-MONITOR] no PyUSB libusb backend")
                 return False
 
-            # libusb_init
             self._libusb.libusb_init.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
             self._libusb.libusb_init.restype = ctypes.c_int
 
-            # libusb_exit
             self._libusb.libusb_exit.argtypes = [ctypes.c_void_p]
             self._libusb.libusb_exit.restype = None
 
-            # libusb_has_capability
             self._libusb.libusb_has_capability.argtypes = [ctypes.c_uint32]
             self._libusb.libusb_has_capability.restype = ctypes.c_int
 
-            # libusb_handle_events_timeout_completed
             class TimeVal(ctypes.Structure):
                 _fields_ = [
                     ("tv_sec", ctypes.c_long),
@@ -164,7 +157,6 @@ class USBMonitor(QObject):
             ]
             self._libusb.libusb_handle_events_timeout_completed.restype = ctypes.c_int
 
-            # hotplug callback type
             self._HotplugCallback = ctypes.CFUNCTYPE(
                 ctypes.c_int,
                 ctypes.c_void_p,
@@ -253,7 +245,7 @@ class USBMonitor(QObject):
             self._stop_libusb_hotplug()
             return False
 
-    def _stop_libusb_hotplug(self) -> None:
+    def _stop_libusb_hotplug(self):
         if not self._hotplug_active and self._ctx is None:
             return
 
@@ -282,7 +274,7 @@ class USBMonitor(QObject):
             self._libusb = None
             self._hotplug_active = False
 
-    def _event_loop(self) -> None:
+    def _event_loop(self):
         print("[USB-MONITOR] _event_loop start")
         completed = ctypes.c_int(0)
 
@@ -303,16 +295,8 @@ class USBMonitor(QObject):
 
         print("[USB-MONITOR] _event_loop end")
 
-    def _on_libusb_hotplug_event(
-        self,
-        ctx: ctypes.c_void_p,
-        device: ctypes.c_void_p,
-        event: int,
-        user_data: ctypes.c_void_p,
-    ) -> int:
+    def _on_libusb_hotplug_event(self, ctx, device, event, user_data):
         print(f"[USB-MONITOR] hotplug event={event}")
-
-        # Re-scan with PyUSB to keep matching logic simple and reliable.
         payload = self._find_camera_payload()
         self._update_connection_state(payload)
         return 0
@@ -321,7 +305,7 @@ class USBMonitor(QObject):
     # device matching
     # ------------------------------------------------------------------
 
-    def _find_camera_payload(self) -> dict | None:
+    def _find_camera_payload(self):
         print("[USB-MONITOR] _find_camera_payload()")
 
         backend = self._backend
@@ -402,7 +386,7 @@ class USBMonitor(QObject):
 
         return None
 
-    def _safe_get_string(self, dev: Any, index: int) -> str:
+    def _safe_get_string(self, dev, index):
         if not index:
             return ""
         try:
@@ -416,7 +400,7 @@ class USBMonitor(QObject):
     # state transition
     # ------------------------------------------------------------------
 
-    def _update_connection_state(self, payload: dict | None) -> None:
+    def _update_connection_state(self, payload):
         now_connected = payload is not None
 
         print(

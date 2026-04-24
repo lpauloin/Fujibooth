@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Protocol
 
 
 @dataclass(slots=True)
@@ -9,7 +8,7 @@ class CameraDescriptor:
     connection: str = "usb"
 
 
-class CameraSdkAdapter(Protocol):
+class CameraSdkAdapter:
     def start(self): ...
     def stop(self): ...
     def is_connected(self): ...

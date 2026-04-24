@@ -277,7 +277,7 @@ class FujifilmSdkBackend(CameraBackend):
     # Worker command handling
     # ------------------------------------------------------------
 
-    def _dispatch_worker_command(self, command: WorkerCommand, payload):
+    def _dispatch_worker_command(self, command, payload):
         print(f"[SDK] worker command={command.name} state={self._current_state().name}")
 
         if command is WorkerCommand.USB_CONNECTED:

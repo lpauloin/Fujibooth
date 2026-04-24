@@ -1,264 +1,311 @@
 # Fujibooth
 
-A desktop photobooth application for **FUJIFILM cameras** using the **Fujifilm SDK**.
+> A macOS photobooth application built for **FUJIFILM cameras** — live view, countdown, capture, gallery, and remote
+> control, all in one focused package.
+
+---
 
 ## Features
 
-- Live view from a FUJIFILM camera
-- Countdown before capture
-- Photo capture through the Fujifilm SDK
-- Full-screen freeze preview after capture
-- Local photo storage through repositories
-- Gallery of recent photos
-- Optional print workflow
-- USB camera presence monitoring
-- Precheck and debug helpers for SDK diagnostics
+### Camera
 
-## Project Scope
+- **Live view** streamed directly from the camera via the Fujifilm SDK
+- **Remote capture** triggered through the SDK (no shutter button needed)
+- **USB presence monitoring** — detects camera plug/unplug in real time
+- **Exposure controls** — adjust ISO, shutter speed, aperture, and AE mode from the UI
 
-This version keeps only:
+### Photobooth workflow
 
-- `FujifilmSdkBackend`
-- Fujifilm SDK bridge / wrapper
-- UI for live view, countdown, capture, freeze, and gallery
-- Photo repositories and services required by the app
+- **Countdown** before each capture (configurable duration)
+- **Full-screen freeze preview** after capture
+- **Photo frame overlay** composited onto every captured image
+- **Gallery** of recent shots at the bottom of the screen, scrollable
 
-This version removes:
+### Remote control
 
-- Mock camera workflow
-- XAcquire hotfolder workflow
-- Unused tests
-- Unused configuration branches related to removed backends
+- **Beauty-R1 BLE remote** supported as a HID device (read via `hidapi`)
+- Raw HID report decoding for button mapping discovery
+- Qt keyboard fallback when HID capture is not active
+- Bluetooth connection badge in the UI
+
+### Printing
+
+- Optional print workflow — shows a **PRINT button** after each capture
+- Calls any external print command configured in `config.yaml`
+
+### UI
+
+- Dark full-screen UI (designed for kiosk use)
+- Camera connection badge with connected/disconnected color state
+- Remote connection badge
+- Tap-to-shoot on the live view
+
+---
 
 ## Requirements
 
-- Python 3.11+ recommended
-- macOS
-- A compatible FUJIFILM camera
-- Fujifilm SDK files available locally
+| Requirement      | Details                                |
+|------------------|----------------------------------------|
+| macOS            | 12 Monterey or later                   |
+| Python           | 3.11+                                  |
+| FUJIFILM camera  | Connected via USB                      |
+| Fujifilm SDK     | Files placed in `./sdk/`               |
+| hidapi           | Native library (`brew install hidapi`) |
+| Beauty-R1 remote | Paired via Bluetooth (optional)        |
 
-Typical SDK directory layout:
+### Fujifilm SDK layout
 
-```text
+Place the SDK files in the `sdk/` directory at the project root:
+
+```
 sdk/
 ├── XAPI.bundle/
 ├── FTLPTP.dylib
 ├── FTLPTPIP.dylib
 ├── FF0000API.bundle
 ├── FF0001API.bundle
-├── ...
 └── XSDK.DAT
 ```
 
+---
+
 ## Installation
 
-Create and activate a virtual environment:
+### 1. Install system dependencies
 
 ```bash
+brew install hidapi
+```
+
+> Required for the Python `hid` library to communicate with the Beauty-R1 remote.
+
+### 2. Clone and set up the virtual environment
+
+```bash
+git clone <repo-url>
+cd fujibooth
+
 python -m venv venv
 source venv/bin/activate
 ```
 
-Install dependencies:
+### 3. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Configuration
+### 4. Place the Fujifilm SDK
 
-The application expects a configuration file, usually:
+Copy your SDK files into `./sdk/` (see layout above).
 
-```text
-config/config.yaml
-```
+### 5. Configure the app
 
-Important settings include:
+Edit `config/config.yaml` (see [Configuration](#configuration) below).
 
-- SDK root path
-- output directory
-- incoming directory
-- SDK capture directory
-- UI behavior
-- printing options
-- USB camera filters
+---
 
-Example logical configuration fields:
-
-```yaml
-camera:
-  backend: fujifilm_sdk
-  sdk:
-    sdk_root: ./sdk
-    library_path: null
-    live_view_interval_ms: 120
-
-app:
-  window_title: Fujibooth
-  countdown_seconds: 5
-  fullscreen: true
-
-storage:
-  accepted_extensions: [".jpg", ".jpeg", ".png", ".raf", ".heic"]
-  filename_pattern: "{timestamp}"
-
-printing:
-  enabled: false
-  command: null
-```
-
-## Running the Application
-
-Start the app with:
+## Running
 
 ```bash
+source venv/bin/activate
 python -m fujibooth.app
 ```
 
-## Runtime Flow
+Press `Esc` to quit. Click the live view (or press the remote button) to start the countdown.
 
-1. The app loads the configuration
-2. The Fujifilm SDK is initialized
-3. The camera is detected and opened
-4. A camera precheck is executed
-5. Live view starts
-6. The user clicks the live view
-7. A countdown is shown
-8. The app triggers a capture
-9. The captured image is stored through the repository
-10. The image is displayed full-screen for a few seconds
-11. The UI returns to live view
+---
 
-## Backend State
+## Configuration
 
-The Fujifilm backend uses a dedicated backend state class.
+All settings live in `config/config.yaml`. The file is loaded automatically at startup.
 
-Typical backend states include:
+```yaml
+app:
+  window_title: FujiBooth
+  fullscreen: false          # set true for kiosk mode
+  countdown_seconds: 5
+  freeze_seconds: 10         # how long the captured photo stays on screen
+  print_button_seconds: 5    # how long the PRINT button is visible
 
-- waiting for camera
-- camera ready
-- live view
-- capturing
-- downloading
+camera:
+  usb:
+    enabled: true
+    vendor_id: "04cb"        # FUJIFILM USB vendor ID
+    product_ids: [ "02e6" ]
+    camera_name_contains: "FUJIFILM"
+  sdk:
+    sdk_root: ./sdk
+    library_path: ""         # leave empty to auto-detect
+    capture_dir: ./runtime/sdk_captures
+    live_view_interval_ms: 120
 
-This keeps the UI logic cleaner and avoids relying on raw string literals everywhere.
+storage:
+  output_dir: ./runtime/output
+  incoming_dir: ./runtime/incoming
+  accepted_extensions: [ ".jpg", ".jpeg", ".png", ".raf", ".heic" ]
+  filename_pattern: "%Y%m%d_%H%M%S"
+  frame_path: ./config/frame.png   # PNG overlay composited onto every photo
 
-## Photo Storage
+printing:
+  enabled: false
+  command: ""                # e.g. "lp -d MyPrinter {path}"
 
-Captured photos are managed through the repository layer.
+remote:
+  enabled: true
+  hid_device_name: "Beauty-R1"   # Bluetooth name shown in macOS
 
-Repositories are intentionally kept in the project because they are part of the core workflow:
+ui:
+  background_color: "#111111"
+  status_connected_color: "#16a34a"
+  status_disconnected_color: "#dc2626"
+  thumbnail_width: 220
+  thumbnail_height: 146
+  bottom_gallery_height: 210
+```
 
-- storing captured images
-- listing recent photos
-- feeding the gallery
-- keeping storage behavior separated from backend logic
+---
 
-## Printing
+## Mapping the Beauty-R1 Remote
 
-Printing is handled by the print service.
+The remote pairs as a BLE HID device. When active, raw HID reports are printed to the console:
 
-Depending on configuration, the app can:
+```
+[HID] report id=3 data=01        bits=00000001
+[HID] -> CAMERA
+[HID] report id=4 data=00 01     bits=00000000 00000001
+```
 
-- show a print button for a captured or selected photo
-- call an external print command
+To map a new button, press it and note the `report id` and `data` values, then add an entry to `BEAUTY_R1_REPORT_MAP` in
+`fujibooth/services/remote_control.py`:
 
-## USB Monitoring
+```python
+BEAUTY_R1_REPORT_MAP: dict[tuple, RemoteButton] = {
+    (3, 0, 0x01): RemoteButton.CAMERA,  # Volume+ button
+    (3, 0, 0x02): RemoteButton.PHOTO,  # Volume- button
+    # (4, 0, 0x01): RemoteButton.CENTER, # mouse button 1
+    # (5, "word", 0x00E9): RemoteButton.CAMERA,
+}
+```
 
-USB monitoring is still present in the project, but it should be used carefully with the Fujifilm SDK backend.
+**Note:** The `hid` library does not seize the device exclusively, so macOS will also see the remote's events (the
+cursor may move when directional buttons are pressed). To suppress OS events entirely, the IOHIDManager seize approach
+is needed instead.
 
-On macOS, parallel USB or device monitoring can interfere with the SDK session depending on timing and system state.
+---
+
+## Photo Frame Overlay
+
+Place a PNG at the path configured in `storage.frame_path` (default: `config/frame.png`). It will be composited on top
+of every captured photo before saving.
+
+The frame must match the output resolution or be designed to scale gracefully.
+
+---
+
+## Runtime Directory Layout
+
+The app creates these directories automatically:
+
+```
+runtime/
+├── output/          # final photos (with frame overlay)
+├── incoming/        # raw captures from the SDK
+└── sdk_captures/    # temporary SDK capture working directory
+```
+
+---
+
+## How It Works
+
+```
+Camera (USB)
+    │
+    ▼
+Fujifilm SDK ──► FujifilmSdkBackend
+    │                    │
+    │              live_view_updated
+    │              photo_captured
+    │              state_changed
+    ▼                    │
+ MainWindow ◄────────────┘
+    │
+    ├── LiveViewWidget    (stream + overlay)
+    ├── ExposureBarWidget (ISO / shutter / aperture / AE mode)
+    ├── GalleryWidget     (recent photos, scrollable)
+    └── PrintService      (optional external print command)
+
+Beauty-R1 (Bluetooth HID)
+    │
+    ▼
+HidDeviceCapture (hid library, polling thread)
+    │
+    ▼
+RemoteControlService ──► button_pressed signal ──► MainWindow
+```
+
+---
 
 ## Diagnostics
 
-A dedicated diagnostic script can be used to inspect SDK behavior and camera capabilities:
+If the camera is not detected or capture fails, run the SDK diagnostic tool:
 
 ```bash
 python tools/fuji_sdk_diag.py --sdk-root ./sdk --test state
+python tools/fuji_sdk_diag.py --sdk-root ./sdk --test capture-pc-all
 ```
 
-Example diagnostic tests:
+Available tests: `state`, `capture-pc`, `capture-pc-all`
 
-- `state`
-- `capture-pc`
-- `capture-pc-all`
+These report:
 
-These diagnostics are useful to determine:
-
-- whether the camera is detected
-- whether the SDK session opens correctly
+- whether the SDK session opens
 - whether live view works
-- which release modes are supported
-- whether remote capture is possible in the current camera state
+- which release modes are available
+- whether remote capture is allowed in the current camera mode
 
-## Important Notes About FUJIFILM Camera State
-
-Remote capture depends heavily on the **physical state of the camera**.
-
-Even if the SDK connection is successful, capture may still fail if the camera is not configured correctly.
-
-Typical things to verify on the camera:
-
-- photo mode, not video mode
-- single drive mode
-- correct USB mode
-- no blocking standby or sleep state
-- no on-camera workflow blocking remote trigger
-
-The diagnostic tools are the best way to confirm what the SDK currently allows.
-
-## Known Limitations
-
-- Fujifilm SDK behavior can vary depending on camera state
-- Some SDK calls may succeed while others fail depending on camera mode
-- Live view may work even when remote capture is not available
-- Capability values returned by the SDK may need to be tested empirically per camera and body state
-- macOS timing can matter for SDK initialization and camera open or detect operations
-
-## Development Notes
-
-This project was intentionally simplified to reduce complexity:
-
-- one real camera backend
-- one SDK path
-- fewer conditionals
-- fewer config branches
-- easier debugging
-
-The goal is to keep the application focused on a single production workflow around FUJIFILM SDK integration.
+---
 
 ## Troubleshooting
 
 ### Camera not detected
 
-Check:
-
-- the camera is powered on
-- the USB cable is working
-- the SDK files are present
-- the configured SDK path is correct
+- Make sure the camera is powered on and in the correct USB mode
+- Verify SDK files are present in `./sdk/`
+- Check `sdk_root` in `config.yaml`
 
 ### Live view works but capture fails
 
-Run:
+The camera mode matters. Ensure:
+
+- Camera is in **photo mode** (not video)
+- **Single drive** mode is selected
+- No on-camera workflow is blocking the remote trigger
+
+Run `capture-pc-all` to confirm what the SDK allows in the current state.
+
+### Remote cursor moves when using directional buttons
+
+The `hid` library does not seize the device exclusively. This is a known limitation — the OS also receives the remote's
+HID events. Workaround: use only the volume buttons (report ID 3) which are consumer-control events and don't move the
+cursor.
+
+### hidapi not found
 
 ```bash
-python tools/fuji_sdk_diag.py --sdk-root ./sdk --test capture-pc-all
+brew install hidapi
 ```
 
-This usually means the SDK session is open, but the camera does not currently allow remote trigger in its current physical mode.
+The `hid` Python package is a thin wrapper around the native `libhidapi` — it must be installed separately via Homebrew.
 
 ### Segmentation faults
 
-Possible causes include:
+- Keep SDK calls serialized (the backend uses a command queue for this)
+- Avoid polling the SDK faster than `live_view_interval_ms`
+- Do not call SDK functions from multiple threads simultaneously
 
-- concurrent SDK calls
-- unsafe polling frequency
-- incompatible SDK call ordering
-- camera or session state transitions happening too quickly
-
-Reduce parallelism and keep SDK access serialized.
+---
 
 ## License
 
-Internal or private project unless stated otherwise.
+[Apache](LICENSE.md)

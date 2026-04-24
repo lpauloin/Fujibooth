@@ -13,9 +13,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..backends.fujifilm_sdk_backend import FujifilmSdkBackend
+from ..models.remote import RemoteButton
 from ..models.state import BackendState, BoothState
 from ..services.photo_repository import PhotoRepository
 from ..services.printer import PrintService
+from ..services.remote_control import RemoteControlService
 from ..services.usb_monitor import USBMonitor, USBMonitorConfig
 from .exposure_bar import ExposureBarWidget
 from .widgets import GalleryWidget, LiveViewWidget
@@ -92,6 +94,7 @@ class MainWindow(QMainWindow):
         self._usb_monitor_started = False
         self._camera_connected = False
         self._camera_label = "FUJIFILM"
+        self._remote_gallery_index: int = -1  # -1 = no remote selection active
 
         self.setWindowTitle(settings.app.window_title)
         self.setStyleSheet(f"background: {settings.ui.background_color}; color: white;")
@@ -112,6 +115,12 @@ class MainWindow(QMainWindow):
         )
         self.backend = FujifilmSdkBackend(settings=settings)
         print(f"[UI] backend selected: {self.backend.__class__.__name__}")
+
+        self.remote = RemoteControlService(parent=self)
+        self.remote.button_pressed.connect(self._on_remote_button)
+        self.remote.hid_connected.connect(self._on_remote_hid_connected)
+        self.remote.hid_disconnected.connect(self._on_remote_hid_disconnected)
+        print(f"[UI] remote control enabled={settings.remote.enabled}")
 
         self.usb_monitor = USBMonitor(
             USBMonitorConfig(
@@ -308,7 +317,7 @@ class MainWindow(QMainWindow):
         else:
             print(f"[UI] _set_combo_by_value: value {raw_value!r} not found in combo")
 
-    def _set_combo_auto(self, combo) -> None:
+    def _set_combo_auto(self, combo):
         combo.blockSignals(True)
         combo.clear()
         combo.addItem("AUTO", None)
@@ -317,10 +326,10 @@ class MainWindow(QMainWindow):
         combo.blockSignals(False)
 
     @staticmethod
-    def _combo_is_auto(combo) -> bool:
+    def _combo_is_auto(combo):
         return combo.count() == 1 and combo.itemData(0) is None
 
-    def _reapply_combo_enabled_state(self) -> None:
+    def _reapply_combo_enabled_state(self):
         """Re-disable AUTO combos after a blind _set_exposure_controls_enabled(True).
         No SDK calls — purely inspects current combo content."""
         if not self._camera_connected:
@@ -395,6 +404,10 @@ class MainWindow(QMainWindow):
             self.usb_monitor.start()
             self._usb_monitor_started = True
 
+        rc = self.settings.remote
+        if rc.enabled and rc.hid_device_name:
+            self.remote.start_hid_monitor(rc.hid_device_name)
+
         if self.settings.app.fullscreen:
             self.showFullScreen()
         else:
@@ -408,6 +421,7 @@ class MainWindow(QMainWindow):
         self.freeze_timer.stop()
         self.print_button_timer.stop()
         self.return_timer.stop()
+        self.remote.stop()
 
         if self._usb_monitor_started:
             try:
@@ -441,7 +455,68 @@ class MainWindow(QMainWindow):
             self.shutdown()
             self.close()
             return
+        if self.remote.handle_key(event.key()):
+            return
         super().keyPressEvent(event)
+
+    # ------------------------------------------------------------------
+    # Remote control dispatch
+    # ------------------------------------------------------------------
+
+    @Slot(RemoteButton)
+    def _on_remote_button(self, button):
+        print(f"[UI] remote button={button.name} state={self.state}")
+
+        _busy = {BoothState.COUNTDOWN, BoothState.CAPTURING, BoothState.DOWNLOADING}
+        if self.state in _busy:
+            return
+
+        match button:
+            case RemoteButton.CAMERA | RemoteButton.PHOTO | RemoteButton.CENTER if (
+                self.state is BoothState.LIVE_VIEW
+            ):
+                self.start_countdown()
+
+            case RemoteButton.LEFT if self.state not in {BoothState.WAITING_FOR_CAMERA}:
+                self._remote_gallery_navigate(-1)
+
+            case RemoteButton.RIGHT if self.state not in {
+                BoothState.WAITING_FOR_CAMERA
+            }:
+                self._remote_gallery_navigate(1)
+
+            case RemoteButton.PHOTO if self.state in {
+                BoothState.FREEZE,
+                BoothState.PHOTO_SELECTED,
+            }:
+                self.on_print_clicked()
+
+            case RemoteButton.CENTER if self.state in {
+                BoothState.FREEZE,
+                BoothState.PHOTO_SELECTED,
+            }:
+                self.on_print_clicked()
+
+            case RemoteButton.CAMERA if self.state in {
+                BoothState.FREEZE,
+                BoothState.PHOTO_SELECTED,
+            }:
+                self._return_to_live_view()
+
+    def _remote_gallery_navigate(self, delta):
+        photos = self.repository.recent(limit=50)
+        if not photos:
+            return
+
+        if self._remote_gallery_index < 0:
+            # Start at the most recent photo
+            self._remote_gallery_index = len(photos) - 1
+        else:
+            self._remote_gallery_index = max(
+                0, min(len(photos) - 1, self._remote_gallery_index + delta)
+            )
+
+        self.on_photo_selected(str(photos[self._remote_gallery_index]))
 
     @Slot()
     def start_countdown(self):
@@ -502,7 +577,7 @@ class MainWindow(QMainWindow):
             self.message_label.setText(str(exc))
 
     @Slot(str)
-    def on_exposure_changed(self, field: str):
+    def on_exposure_changed(self, field):
         print(f"[UI] on_exposure_changed field={field}")
         if not self._camera_connected:
             self.message_label.setText("Waiting for FUJIFILM camera")
@@ -692,6 +767,7 @@ class MainWindow(QMainWindow):
         self.return_timer.stop()
         self.print_button_timer.stop()
         self.print_button.hide()
+        self._remote_gallery_index = -1
 
         if self._camera_connected:
             self._set_state(BoothState.LIVE_VIEW)
@@ -869,6 +945,20 @@ class MainWindow(QMainWindow):
         self.live_view.hide_overlay()
         self.message_label.setText(message)
         self._debug_dump_ui_state("after on_error")
+
+    @Slot(str)
+    def _on_remote_hid_connected(self, name):
+        print(f"[UI] remote HID connected name={name}")
+        self.live_view.set_remote_status(
+            "Remote connected", self.settings.ui.status_connected_color
+        )
+
+    @Slot(str)
+    def _on_remote_hid_disconnected(self, name):
+        print(f"[UI] remote HID disconnected name={name}")
+        self.live_view.set_remote_status(
+            "Remote disconnected", self.settings.ui.status_disconnected_color
+        )
 
     def refresh_gallery(self):
         photos = self.repository.recent(limit=50)
