@@ -115,6 +115,7 @@ class HidDeviceCapture:
                     f"[HID] device opened VID={self._vid:#06x} "
                     f"PID={self._pid:#06x} — reading reports"
                 )
+                print("[HID] Press each button — copy the [HID-MAP] lines into BEAUTY_R1_REPORT_MAP")
 
                 while not self._stop.is_set():
                     # read() with timeout; returns [] on timeout, None on error
@@ -173,14 +174,61 @@ class RemoteControlService(QObject):
     def _on_hid_report(self, report_id, data):
         hex_data = data.hex(" ") if data else "(empty)"
         print(
-            f"[HID] report id={report_id} data={hex_data}  "
+            f"[HID] report id={report_id}  data={hex_data}  "
             f"bits={' '.join(f'{b:08b}' for b in data)}"
         )
+        self._print_mapping_hints(report_id, data)
 
         btn = self._decode_report(report_id, data)
         if btn is not None:
             print(f"[HID] -> {btn.name}")
             self.button_pressed.emit(btn)
+
+    def _print_mapping_hints(self, report_id, data):
+        buttons_label = [b.name for b in RemoteButton]
+        hint = f"  # RemoteButton.{'|'.join(buttons_label)}"
+
+        if report_id == 3 and data:
+            byte0 = data[0]
+            for mask in (0x01, 0x02, 0x04, 0x08, 0x10):
+                if byte0 & mask:
+                    key = (3, 0, mask)
+                    mapped = BEAUTY_R1_REPORT_MAP.get(key)
+                    if mapped:
+                        print(f"[HID-MAP]   (3, 0, {mask:#04x}): RemoteButton.{mapped.name}  ✓ mapped")
+                    else:
+                        print(f"[HID-MAP]   (3, 0, {mask:#04x}): RemoteButton.???{hint}")
+
+        elif report_id == 4 and data:
+            buttons = data[0] & 0x1F
+            wheel = ctypes.c_int8(data[1] if len(data) > 1 else 0).value
+            for bit in range(5):
+                mask = 1 << bit
+                if buttons & mask:
+                    key = (4, 0, mask)
+                    mapped = BEAUTY_R1_REPORT_MAP.get(key)
+                    if mapped:
+                        print(f"[HID-MAP]   (4, 0, {mask:#04x}): RemoteButton.{mapped.name}  ✓ mapped")
+                    else:
+                        print(f"[HID-MAP]   (4, 0, {mask:#04x}): RemoteButton.???{hint}")
+            if wheel:
+                direction = "wheel_up" if wheel > 0 else "wheel_down"
+                key = (4, direction)
+                mapped = BEAUTY_R1_REPORT_MAP.get(key)
+                if mapped:
+                    print(f"[HID-MAP]   (4, \"{direction}\"): RemoteButton.{mapped.name}  ✓ mapped")
+                else:
+                    print(f"[HID-MAP]   (4, \"{direction}\"): RemoteButton.???{hint}  (delta={wheel})")
+
+        elif report_id == 5 and len(data) >= 2:
+            code = data[0] | (data[1] << 8)
+            if code:
+                key = (5, "word", code)
+                mapped = BEAUTY_R1_REPORT_MAP.get(key)
+                if mapped:
+                    print(f"[HID-MAP]   (5, \"word\", {code:#06x}): RemoteButton.{mapped.name}  ✓ mapped")
+                else:
+                    print(f"[HID-MAP]   (5, \"word\", {code:#06x}): RemoteButton.???{hint}")
 
     def _decode_report(self, report_id, data):
         if not data:
