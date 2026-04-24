@@ -22,24 +22,48 @@ class PhotoRepository:
                 print(f"[REPO] frame PNG not found: {frame_path}")
             else:
                 self._frame_image = PILImage.open(frame_path).convert("RGBA")
-                print(
-                    f"[REPO] frame loaded: {frame_path} size={self._frame_image.size}"
-                )
+                print(f"[REPO] frame loaded: {frame_path} size={self._frame_image.size}")
 
     @property
-    def _has_frame(self):
+    def has_frame(self):
         return self._frame_image is not None
 
-    def _apply_frame(self, original_path, framed_path):
+    def save(self, source_path):
+        """Move a raw SDK file into captures_dir with a timestamped name."""
+        suffix = source_path.suffix.lower()
+        if suffix not in self.extensions:
+            raise ValueError(f"Unsupported file extension: {source_path.suffix}")
+        stem = datetime.now().strftime(self.filename_pattern)
+        target = self._unique_path(self.captures_dir, stem, suffix)
+        shutil.move(str(source_path), target)
+        print(f"[REPO] raw saved: {target}")
+        return target
+
+    def frame(self, raw_path):
+        """Composite the frame over raw_path and write the result to output_dir."""
+        if not self.has_frame:
+            raise RuntimeError("No frame loaded")
+        output = self._unique_path(self.output_dir, raw_path.stem, ".jpg")
         try:
-            photo = PILImage.open(original_path).convert("RGBA")
-            frame = self._frame_image.resize(photo.size, PILImage.LANCZOS)
-            composite = PILImage.alpha_composite(photo, frame)
-            composite.convert("RGB").save(framed_path, quality=95)
-            return True
+            photo = PILImage.open(raw_path).convert("RGBA")
+            overlay = self._frame_image.resize(photo.size, PILImage.LANCZOS)
+            composite = PILImage.alpha_composite(photo, overlay)
+            composite.convert("RGB").save(output, quality=95)
         except Exception as exc:
-            print(f"[REPO] _apply_frame error: {exc}")
-            return False
+            print(f"[REPO] frame error: {exc}")
+            raise
+        print(f"[REPO] framed saved: {output}")
+        return output
+
+    def recent(self, limit=50):
+        """List photos for gallery display (framed if a frame is loaded, else raw)."""
+        search_dir = self.output_dir if self.has_frame else self.captures_dir
+        photos = [
+            p for p in search_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in self.extensions
+        ]
+        photos.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return photos[:limit]
 
     def _unique_path(self, directory, stem, suffix):
         target = directory / f"{stem}{suffix}"
@@ -48,32 +72,3 @@ class PhotoRepository:
             target = directory / f"{stem}_{counter}{suffix}"
             counter += 1
         return target
-
-    def store(self, source_path):
-        suffix = source_path.suffix.lower()
-        if suffix not in self.extensions:
-            raise ValueError(f"Unsupported file extension: {source_path.suffix}")
-        stem = datetime.now().strftime(self.filename_pattern)
-
-        capture_target = self._unique_path(self.captures_dir, stem, suffix)
-        shutil.move(str(source_path), capture_target)
-        print(f"[REPO] capture saved: {capture_target}")
-
-        if self._has_frame:
-            output_target = self._unique_path(self.output_dir, stem, ".jpg")
-            if self._apply_frame(capture_target, output_target):
-                print(f"[REPO] framed output saved: {output_target}")
-                return output_target
-            print("[REPO] frame apply failed, returning capture")
-
-        return capture_target
-
-    def recent(self, limit=50):
-        search_dir = self.output_dir if self._has_frame else self.captures_dir
-        photos = [
-            path
-            for path in search_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in self.extensions
-        ]
-        photos.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        return photos[:limit]

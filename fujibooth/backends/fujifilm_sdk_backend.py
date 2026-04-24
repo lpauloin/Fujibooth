@@ -71,7 +71,7 @@ class FujifilmSdkBackend(CameraBackend):
             SessionState.CAPTURING: BackendState.CAPTURING,
             SessionState.ERROR: BackendState.WAITING_FOR_CAMERA,
         }
-        self.emit_backend_state(mapping[self.state])
+        self.emit_state(mapping[self.state])
 
     def _current_state(self):
         with self._lock:
@@ -242,7 +242,7 @@ class FujifilmSdkBackend(CameraBackend):
 
         except Exception as exc:
             print(f"[SDK] worker fatal error: {exc}")
-            self.error.emit(str(exc))
+            self.emit_error(exc)
             self._set_session_state(SessionState.ERROR, f"worker fatal error: {exc}")
 
         finally:
@@ -255,7 +255,7 @@ class FujifilmSdkBackend(CameraBackend):
                     self.adapter.disconnect_camera()
                 except Exception as exc:
                     print(f"[SDK] disconnect during worker shutdown ignored: {exc}")
-                self.camera_disconnected.emit()
+                self.emit_camera_disconnected()
 
             if adapter_started:
                 try:
@@ -393,7 +393,7 @@ class FujifilmSdkBackend(CameraBackend):
             )
         except Exception as exc:
             print(f"[SDK] connect failed: {exc}")
-            self.error.emit(str(exc))
+            self.emit_error(exc)
             self._set_session_state(SessionState.WAITING_USB, f"connect failed: {exc}")
             self._schedule_reconnect_from_worker()
             return
@@ -406,7 +406,7 @@ class FujifilmSdkBackend(CameraBackend):
             )
             self._next_health_check_at = time.monotonic() + self._health_interval_s
 
-        self.camera_connected.emit(
+        self.emit_camera_connected(
             {
                 "label": f"{descriptor.model} connected",
                 "serial": descriptor.serial,
@@ -432,7 +432,7 @@ class FujifilmSdkBackend(CameraBackend):
                 print(f"[SDK] adapter.disconnect_camera ignored: {exc}")
 
         if emit_signal and was_connected:
-            self.camera_disconnected.emit()
+            self.emit_camera_disconnected()
 
         self._set_session_state(SessionState.WAITING_USB, reason)
 
@@ -475,7 +475,7 @@ class FujifilmSdkBackend(CameraBackend):
             else:
                 # Keep the session alive on operational errors. The UI can still
                 # recover, refresh settings, or let the operator fix the camera state.
-                self.error.emit(str(exc))
+                self.emit_error(exc)
                 self._set_session_state(SessionState.READY, str(exc))
             return False
 
@@ -519,7 +519,7 @@ class FujifilmSdkBackend(CameraBackend):
             if self._is_disconnect_error(exc):
                 self._handle_session_lost_from_worker(str(exc), emit_signal=True)
             else:
-                self.error.emit(str(exc))
+                self.emit_error(exc)
                 self._set_session_state(SessionState.READY, str(exc))
                 self._next_live_poll_at = None
             return
@@ -527,7 +527,7 @@ class FujifilmSdkBackend(CameraBackend):
         if frame is None or frame.isNull():
             return
 
-        self.live_view_updated.emit(frame)
+        self.emit_live_frame(frame)
 
     # ------------------------------------------------------------
     # Health
@@ -599,7 +599,7 @@ class FujifilmSdkBackend(CameraBackend):
 
         if not self._safe_is_session_open():
             self._exposure_refresh_scheduled = False
-            self.exposure_data_failed.emit("Camera SDK session not open")
+            self.emit_exposure_failed("Camera SDK session not open")
             self._handle_session_lost_from_worker(
                 "async load lost session", emit_signal=True
             )
@@ -614,10 +614,10 @@ class FujifilmSdkBackend(CameraBackend):
         try:
             options = self.adapter.get_exposure_options()
             current = self.adapter.get_exposure_state()
-            self.exposure_data_ready.emit({"options": options, "state": current})
+            self.emit_exposure_ready({"options": options, "state": current})
         except Exception as exc:
             print(f"[SDK] exposure data query failed: {exc}")
-            self.exposure_data_failed.emit(str(exc))
+            self.emit_exposure_failed(exc)
             if self._is_disconnect_error(exc):
                 self._handle_session_lost_from_worker(str(exc), emit_signal=True)
                 self._exposure_refresh_scheduled = False
@@ -658,7 +658,7 @@ class FujifilmSdkBackend(CameraBackend):
             )
             return
 
-        self.emit_backend_state(BackendState.UPDATING_CAMERA_PARAMS)
+        self.emit_state(BackendState.UPDATING_CAMERA_PARAMS)
 
         was_live = state is SessionState.LIVE
         if was_live:
@@ -673,7 +673,7 @@ class FujifilmSdkBackend(CameraBackend):
             )
         except Exception as exc:
             print(f"[SDK] set_exposure failed: {exc}")
-            self.error.emit(str(exc))
+            self.emit_error(exc)
             if self._is_disconnect_error(exc):
                 self._handle_session_lost_from_worker(str(exc), emit_signal=True)
                 self._exposure_apply_scheduled = False
@@ -721,7 +721,7 @@ class FujifilmSdkBackend(CameraBackend):
             path = self.adapter.capture_photo(self.repository.captures_dir)
         except Exception as exc:
             print(f"[SDK] capture failed: {exc}")
-            self.error.emit(str(exc))
+            self.emit_error(exc)
             if self._is_disconnect_error(exc):
                 self._handle_session_lost_from_worker(str(exc), emit_signal=True)
                 return
@@ -732,14 +732,15 @@ class FujifilmSdkBackend(CameraBackend):
                 self._set_session_state(SessionState.READY, "capture error recovery")
             return
 
-        self.emit_backend_state(BackendState.DOWNLOADING)
+        self.emit_state(BackendState.DOWNLOADING)
         try:
-            path = self.repository.store(path)
+            raw = self.repository.save(path)
+            display = self.repository.frame(raw) if self.repository.has_frame else raw
         except Exception as exc:
-            print(f"[SDK] repository.store failed: {exc}")
-            self.error.emit(str(exc))
+            print(f"[SDK] repository error: {exc}")
+            self.emit_error(exc)
             return
-        self._emit_photo(path)
+        self.emit_photo(display)
 
         if was_live and self._safe_is_session_open() and not self._stopping:
             self._try_start_live_view_from_worker("live restored after capture")
