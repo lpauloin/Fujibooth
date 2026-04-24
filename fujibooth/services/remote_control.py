@@ -30,10 +30,25 @@ from PySide6.QtCore import QObject, Qt, Signal
 from ..models.remote import RemoteButton
 
 
-class _BtnState(Enum):
-    IDLE = auto()             # no button held
-    ARMED = auto()            # ID 4 pressed, center timer running
-    DIRECTION_FIRED = auto()  # direction code received and emitted
+class BtnState(Enum):
+    IDLE = auto()
+    PENDING_CENTER = auto()
+    BUTTON_FIRED = auto()
+
+
+# Delay during which a report ID 5 direction can cancel the pending CENTER.
+#
+# Beauty-R1 seems to emit report ID 4 first, then report ID 5 for directional
+# buttons. Therefore CENTER cannot be emitted immediately on report ID 4.
+CENTER_GRACE_DELAY = 0.15
+
+# Safety delay used after a button has fired.
+#
+# Normally the state returns to IDLE on the report ID 4 release edge. This timer
+# prevents the state machine from getting stuck if the remote does not send a
+# clean release report.
+BUTTON_RESET_DELAY = 0.35
+
 
 # ------------------------------------------------------------------
 # Keyboard fallback mapping (used when HID capture is not active)
@@ -52,18 +67,25 @@ DEFAULT_KEY_MAP = {
 
 QT_KEY_NAMES = {v.value: v.name for v in Qt.Key if isinstance(v.value, int)}
 
+
 # ------------------------------------------------------------------
 # Beauty-R1 HID report map
-# Fill entries as you discover them by watching the "[HID] report" logs.
 #
-# Format: (report_id, byte_index, bit_mask) → RemoteButton
-#   or    (report_id, "word", usage_code)   → RemoteButton  (16-bit, report ID 5)
+# Format:
+#   (report_id, byte_index, bit_mask) → RemoteButton
+#   (report_id, "word", usage_code)   → RemoteButton
+#   (report_id, "wheel_up")           → RemoteButton
+#   (report_id, "wheel_down")         → RemoteButton
 # ------------------------------------------------------------------
+
 BEAUTY_R1_REPORT_MAP = {
     # Report ID 3 — consumer control bits
     (3, 0, 0x02): RemoteButton.PHOTO,  # Volume Decrement
-    # Report ID 5 — directional codes (sustained code repeated 3× after the ID 4 click)
-    # CENTER is handled via a 150ms debounce timer — not in this map
+    # Report ID 5 — directional codes.
+    #
+    # CENTER is deliberately NOT mapped here.
+    # CENTER is inferred from report ID 4 when no direction arrives during the
+    # grace window.
     (5, "word", 0xC000): RemoteButton.UP,
     (5, "word", 0xE000): RemoteButton.DOWN,
     (5, "word", 0x0FD8): RemoteButton.RIGHT,
@@ -92,9 +114,12 @@ class HidDeviceCapture:
     def start(self):
         if self._thread and self._thread.is_alive():
             return
+
         self._stop.clear()
         self._thread = threading.Thread(
-            target=self._run, name="hid-capture", daemon=True
+            target=self._run,
+            name="hid-capture",
+            daemon=True,
         )
         self._thread.start()
 
@@ -106,6 +131,7 @@ class HidDeviceCapture:
         if not all_devices:
             print("[HID-ENUM] no HID devices found")
             return
+
         print(f"[HID-ENUM] {len(all_devices)} HID device(s) visible:")
         for d in all_devices:
             print(
@@ -121,7 +147,6 @@ class HidDeviceCapture:
         self._log_all_hid_devices()
 
         while not self._stop.is_set():
-            # Wait for the device to appear (polls every 2 s)
             devices = hid.enumerate(self._vid, self._pid)
             if not devices:
                 self._stop.wait(timeout=2.0)
@@ -139,7 +164,8 @@ class HidDeviceCapture:
                 f"PID={self._pid:#06x} — reading reports"
             )
             print(
-                "[HID] Press each button — copy the [HID-MAP] lines into BEAUTY_R1_REPORT_MAP"
+                "[HID] Press each button — copy the [HID-MAP] lines into "
+                "BEAUTY_R1_REPORT_MAP"
             )
 
             try:
@@ -152,11 +178,13 @@ class HidDeviceCapture:
 
             except OSError as exc:
                 print(f"[HID] device error: {exc}")
+
             finally:
                 try:
                     dev.close()
                 except Exception:
                     pass
+
                 if not self._stop.is_set():
                     print("[HID] device lost — waiting for reconnect")
 
@@ -172,8 +200,34 @@ class RemoteControlService(QObject):
     """
     Bridges the Beauty-R1 remote to RemoteButton signals.
 
-    Primary mode: `hid` library polling thread (raw HID reports).
+    Primary mode: `hid` library polling thread, using raw HID reports.
     Fallback: Qt keyPressEvent interception.
+
+    Button state machine for report ID 4 / report ID 5:
+
+        IDLE
+          └─ report ID 4 button down
+                → PENDING_CENTER
+
+        PENDING_CENTER
+          ├─ report ID 5 direction arrives before timeout
+          │     → emit direction
+          │     → BUTTON_FIRED
+          │
+          └─ no report ID 5 before timeout
+                → emit CENTER
+                → BUTTON_FIRED
+
+        BUTTON_FIRED
+          ├─ report ID 4 release
+          │     → IDLE
+          │
+          └─ reset timeout
+                → IDLE, but if the physical button still appears down,
+                  suppress new press detection until a release is observed.
+
+    This guarantees that one physical action emits at most one logical
+    RemoteButton.
     """
 
     button_pressed = Signal(RemoteButton)
@@ -182,21 +236,40 @@ class RemoteControlService(QObject):
 
     def __init__(self, key_map=None, parent=None):
         super().__init__(parent)
+
         self._key_map = key_map or DEFAULT_KEY_MAP
+
         self._hid_capture = None
         self._hid_monitor_thread = None
         self._hid_stop = threading.Event()
-        self._consumer_bits = {}  # dedup for report ID 3 consumer bits
-        self._btn_state = _BtnState.IDLE
+
+        # Report ID 3 dedup state.
+        self._consumer_bits = {}
+
+        # Report ID 4 / 5 state machine.
+        self._btn_state = BtnState.IDLE
+        self._btn_lock = threading.RLock()
         self._center_timer = None
-        self._center_lock = threading.Lock()
+        self._reset_timer = None
+
+        # Last known physical state of report ID 4 button 1.
+        self._mouse_btn1_down = False
+
+        # Used when the reset timer fires while the button still looks pressed.
+        # Without this, a repeated "down" report could be interpreted as a new
+        # click and emit CENTER repeatedly while the user is holding the button.
+        self._suppress_until_release = False
 
     # ------------------------------------------------------------------
     # Primary: hid library capture
     # ------------------------------------------------------------------
 
     def start_hid_capture(self, vendor_id, product_id):
-        self._hid_capture = HidDeviceCapture(vendor_id, product_id, self._on_hid_report)
+        self._hid_capture = HidDeviceCapture(
+            vendor_id,
+            product_id,
+            self._on_hid_report,
+        )
         self._hid_capture.start()
 
     def _on_hid_report(self, report_id, data):
@@ -205,6 +278,7 @@ class RemoteControlService(QObject):
             f"[HID] report id={report_id}  data={hex_data}  "
             f"bits={' '.join(f'{b:08b}' for b in data)}"
         )
+
         self._print_mapping_hints(report_id, data)
 
         btn = self._decode_report(report_id, data)
@@ -224,16 +298,19 @@ class RemoteControlService(QObject):
                     mapped = BEAUTY_R1_REPORT_MAP.get(key)
                     if mapped:
                         print(
-                            f"[HID-MAP]   (3, 0, {mask:#04x}): RemoteButton.{mapped.name}  ✓ mapped"
+                            f"[HID-MAP]   (3, 0, {mask:#04x}): "
+                            f"RemoteButton.{mapped.name}  ✓ mapped"
                         )
                     else:
                         print(
-                            f"[HID-MAP]   (3, 0, {mask:#04x}): RemoteButton.???{hint}"
+                            f"[HID-MAP]   (3, 0, {mask:#04x}): "
+                            f"RemoteButton.???{hint}"
                         )
 
         elif report_id == 4 and data:
             buttons = data[0] & 0x1F
             wheel = ctypes.c_int8(data[1] if len(data) > 1 else 0).value
+
             for bit in range(5):
                 mask = 1 << bit
                 if buttons & mask:
@@ -241,23 +318,28 @@ class RemoteControlService(QObject):
                     mapped = BEAUTY_R1_REPORT_MAP.get(key)
                     if mapped:
                         print(
-                            f"[HID-MAP]   (4, 0, {mask:#04x}): RemoteButton.{mapped.name}  ✓ mapped"
+                            f"[HID-MAP]   (4, 0, {mask:#04x}): "
+                            f"RemoteButton.{mapped.name}  ✓ mapped"
                         )
                     else:
                         print(
-                            f"[HID-MAP]   (4, 0, {mask:#04x}): RemoteButton.???{hint}"
+                            f"[HID-MAP]   (4, 0, {mask:#04x}): "
+                            f"RemoteButton.???{hint}"
                         )
+
             if wheel:
                 direction = "wheel_up" if wheel > 0 else "wheel_down"
                 key = (4, direction)
                 mapped = BEAUTY_R1_REPORT_MAP.get(key)
                 if mapped:
                     print(
-                        f'[HID-MAP]   (4, "{direction}"): RemoteButton.{mapped.name}  ✓ mapped'
+                        f'[HID-MAP]   (4, "{direction}"): '
+                        f"RemoteButton.{mapped.name}  ✓ mapped"
                     )
                 else:
                     print(
-                        f'[HID-MAP]   (4, "{direction}"): RemoteButton.???{hint}  (delta={wheel})'
+                        f'[HID-MAP]   (4, "{direction}"): '
+                        f"RemoteButton.???{hint}  (delta={wheel})"
                     )
 
         elif report_id == 5 and len(data) >= 2:
@@ -267,11 +349,13 @@ class RemoteControlService(QObject):
                 mapped = BEAUTY_R1_REPORT_MAP.get(key)
                 if mapped:
                     print(
-                        f'[HID-MAP]   (5, "word", {code:#06x}): RemoteButton.{mapped.name}  ✓ mapped'
+                        f'[HID-MAP]   (5, "word", {code:#06x}): '
+                        f"RemoteButton.{mapped.name}  ✓ mapped"
                     )
                 else:
                     print(
-                        f'[HID-MAP]   (5, "word", {code:#06x}): RemoteButton.???{hint}'
+                        f'[HID-MAP]   (5, "word", {code:#06x}): '
+                        f"RemoteButton.???{hint}"
                     )
 
     def _decode_report(self, report_id, data):
@@ -279,67 +363,241 @@ class RemoteControlService(QObject):
             return None
 
         if report_id == 3:
-            # Consumer control bits — PHOTO button lives here
-            byte0 = data[0]
-            for mask in (0x01, 0x02, 0x04, 0x08, 0x10):
-                if byte0 & mask:
-                    btn = BEAUTY_R1_REPORT_MAP.get((3, 0, mask))
-                    if btn and not self._consumer_bits.get(mask):
-                        self._consumer_bits[mask] = True
-                        return btn
-                else:
-                    self._consumer_bits[mask] = False
+            return self._decode_consumer_report(data)
 
-        elif report_id == 4:
-            # Mouse button — drives the IDLE → ARMED → IDLE state machine
-            btn1 = bool(data[0] & 0x01)
-            if btn1 and self._btn_state is _BtnState.IDLE:
-                self._btn_state = _BtnState.ARMED
-                print(f"[BTN] IDLE → ARMED")
-                self._arm_pending_center()
-            elif not btn1 and self._btn_state is not _BtnState.IDLE:
-                self._btn_state = _BtnState.IDLE
-                print(f"[BTN] → IDLE")
+        if report_id == 4:
+            return self._decode_mouse_report(data)
 
-            wheel = ctypes.c_int8(data[1] if len(data) > 1 else 0).value
-            if wheel:
-                btn = BEAUTY_R1_REPORT_MAP.get(
-                    (4, "wheel_up") if wheel > 0 else (4, "wheel_down")
-                )
-                if btn:
-                    return btn
-
-        elif report_id == 5 and len(data) >= 2:
-            # Direction codes — only accepted in ARMED state (one direction per press)
-            code = data[0] | (data[1] << 8)
-            if code and self._btn_state is _BtnState.ARMED:
-                btn = BEAUTY_R1_REPORT_MAP.get((5, "word", code))
-                if btn:
-                    self._btn_state = _BtnState.DIRECTION_FIRED
-                    print(f"[BTN] ARMED → DIRECTION_FIRED ({btn.name})")
-                    self._cancel_pending_center()
-                    return btn
+        if report_id == 5:
+            return self._decode_direction_report(data)
 
         return None
 
-    def _arm_pending_center(self):
-        with self._center_lock:
-            if self._center_timer:
-                self._center_timer.cancel()
-            self._center_timer = threading.Timer(0.15, self._emit_center)
-            self._center_timer.start()
+    def _decode_consumer_report(self, data):
+        """
+        Report ID 3: consumer control bits.
 
-    def _cancel_pending_center(self):
-        with self._center_lock:
-            if self._center_timer:
-                self._center_timer.cancel()
-                self._center_timer = None
+        PHOTO lives here. We deduplicate press/release because this report can
+        be repeated while the button is held.
+        """
+        byte0 = data[0]
 
-    def _emit_center(self):
-        with self._center_lock:
+        for mask in (0x01, 0x02, 0x04, 0x08, 0x10):
+            is_pressed = bool(byte0 & mask)
+            was_pressed = self._consumer_bits.get(mask, False)
+
+            if is_pressed and not was_pressed:
+                self._consumer_bits[mask] = True
+                return BEAUTY_R1_REPORT_MAP.get((3, 0, mask))
+
+            if not is_pressed:
+                self._consumer_bits[mask] = False
+
+        return None
+
+    def _decode_mouse_report(self, data):
+        """
+        Report ID 4: mouse-style report.
+
+        We use button 1 as the trigger for a logical action, but we do not know
+        immediately whether the action is CENTER or a direction.
+
+        Directional buttons appear as:
+          report ID 4 button event
+          then report ID 5 direction usage code
+
+        CENTER appears as:
+          report ID 4 button event
+          no following report ID 5 direction usage code
+
+        Therefore report ID 4 starts a pending CENTER window.
+        """
+        buttons = data[0] & 0x1F
+        btn1_down = bool(buttons & 0x01)
+
+        self._handle_mouse_button_transition(btn1_down)
+
+        wheel = ctypes.c_int8(data[1] if len(data) > 1 else 0).value
+        if wheel:
+            key = (4, "wheel_up") if wheel > 0 else (4, "wheel_down")
+            return BEAUTY_R1_REPORT_MAP.get(key)
+
+        return None
+
+    def _decode_direction_report(self, data):
+        """
+        Report ID 5: 16-bit direction usage code.
+
+        A direction is accepted only while CENTER is pending.
+
+        Once a direction has fired, repeated report ID 5 messages are ignored
+        until the state machine resets.
+        """
+        if len(data) < 2:
+            return None
+
+        code = data[0] | (data[1] << 8)
+        if not code:
+            return None
+
+        btn = BEAUTY_R1_REPORT_MAP.get((5, "word", code))
+        if btn is None:
+            return None
+
+        with self._btn_lock:
+            if self._btn_state is not BtnState.PENDING_CENTER:
+                print(
+                    f"[BTN] ignored direction {btn.name} "
+                    f"while state={self._btn_state.name}"
+                )
+                return None
+
+            self._cancel_center_timer_locked()
+            self._btn_state = BtnState.BUTTON_FIRED
+            print(f"[BTN] PENDING_CENTER → BUTTON_FIRED ({btn.name})")
+
+            self._arm_reset_timer_locked()
+
+        return btn
+
+    # ------------------------------------------------------------------
+    # Button state machine
+    # ------------------------------------------------------------------
+
+    def _handle_mouse_button_transition(self, btn1_down):
+        """
+        Handles physical button transitions from report ID 4.
+
+        We react to edges, not repeated reports.
+        """
+        with self._btn_lock:
+            previous = self._mouse_btn1_down
+
+            if btn1_down == previous:
+                return
+
+            self._mouse_btn1_down = btn1_down
+
+            if btn1_down:
+                self._on_mouse_button_down_locked()
+            else:
+                self._on_mouse_button_up_locked()
+
+    def _on_mouse_button_down_locked(self):
+        if self._suppress_until_release:
+            print("[BTN] button down ignored until release")
+            return
+
+        if self._btn_state is not BtnState.IDLE:
+            print(f"[BTN] button down ignored while state={self._btn_state.name}")
+            return
+
+        self._btn_state = BtnState.PENDING_CENTER
+        print("[BTN] IDLE → PENDING_CENTER")
+
+        self._cancel_reset_timer_locked()
+        self._arm_center_timer_locked()
+
+    def _on_mouse_button_up_locked(self):
+        if self._suppress_until_release:
+            self._suppress_until_release = False
+            print("[BTN] release observed — suppression cleared")
+
+        if self._btn_state is BtnState.PENDING_CENTER:
+            # Do not emit CENTER immediately on release.
+            #
+            # On this device, report ID 5 direction codes may arrive just after
+            # the report ID 4 click/release sequence. The center timer remains
+            # the arbiter.
+            print("[BTN] release while PENDING_CENTER — waiting for grace timeout")
+            return
+
+        if self._btn_state is BtnState.BUTTON_FIRED:
+            self._reset_button_state_locked("release after fired button")
+            return
+
+        print("[BTN] release ignored while IDLE")
+
+    def _arm_center_timer_locked(self):
+        self._cancel_center_timer_locked()
+
+        self._center_timer = threading.Timer(
+            CENTER_GRACE_DELAY,
+            self._on_center_timeout,
+        )
+        self._center_timer.daemon = True
+        self._center_timer.start()
+
+    def _cancel_center_timer_locked(self):
+        if self._center_timer:
+            self._center_timer.cancel()
             self._center_timer = None
+
+    def _on_center_timeout(self):
+        with self._btn_lock:
+            self._center_timer = None
+
+            if self._btn_state is not BtnState.PENDING_CENTER:
+                print(
+                    f"[BTN] center timeout ignored "
+                    f"while state={self._btn_state.name}"
+                )
+                return
+
+            self._btn_state = BtnState.BUTTON_FIRED
+            print("[BTN] PENDING_CENTER → BUTTON_FIRED (CENTER)")
+
+            self._arm_reset_timer_locked()
+
         print("[REMOTE] -> CENTER")
         self.button_pressed.emit(RemoteButton.CENTER)
+
+    def _arm_reset_timer_locked(self):
+        self._cancel_reset_timer_locked()
+
+        self._reset_timer = threading.Timer(
+            BUTTON_RESET_DELAY,
+            self._on_reset_timeout,
+        )
+        self._reset_timer.daemon = True
+        self._reset_timer.start()
+
+    def _cancel_reset_timer_locked(self):
+        if self._reset_timer:
+            self._reset_timer.cancel()
+            self._reset_timer = None
+
+    def _on_reset_timeout(self):
+        with self._btn_lock:
+            if self._btn_state is BtnState.IDLE:
+                return
+
+            old_state = self._btn_state
+            self._cancel_center_timer_locked()
+            self._reset_timer = None
+            self._btn_state = BtnState.IDLE
+
+            # Important:
+            #
+            # If the physical button still appears down, do NOT pretend it is
+            # released. Otherwise the next repeated down report could be seen
+            # as a new press and emit CENTER again.
+            #
+            # Instead, suppress new down handling until a real release edge is
+            # observed.
+            if self._mouse_btn1_down:
+                self._suppress_until_release = True
+
+            print(f"[BTN] {old_state.name} → IDLE (reset timeout)")
+
+    def _reset_button_state_locked(self, reason):
+        self._cancel_center_timer_locked()
+        self._cancel_reset_timer_locked()
+
+        old_state = self._btn_state
+        self._btn_state = BtnState.IDLE
+
+        print(f"[BTN] {old_state.name} → IDLE ({reason})")
 
     # ------------------------------------------------------------------
     # Fallback: Qt keyboard interception
@@ -348,20 +606,23 @@ class RemoteControlService(QObject):
     def handle_key(self, key):
         key_name = QT_KEY_NAMES.get(key, str(key))
         button = self._key_map.get(key)
+
         if button is not None:
             print(f"[REMOTE] key={key_name} ({key}) -> {button.name}")
             self.button_pressed.emit(button)
             return True
+
         print(f"[REMOTE] unmapped key={key_name} ({key})")
         return False
 
     # ------------------------------------------------------------------
-    # HID connection monitor (polls macOS every 5 s)
+    # HID connection monitor: polls macOS every N seconds
     # ------------------------------------------------------------------
 
     def start_hid_monitor(self, device_name, poll_interval=5.0):
         if self._hid_monitor_thread and self._hid_monitor_thread.is_alive():
             return
+
         self._hid_stop.clear()
         self._hid_monitor_thread = threading.Thread(
             target=self._hid_monitor_worker,
@@ -370,20 +631,25 @@ class RemoteControlService(QObject):
             daemon=True,
         )
         self._hid_monitor_thread.start()
+
         print(f"[REMOTE-HID] monitor started for '{device_name}'")
 
     def _hid_monitor_worker(self, device_name, interval):
         last = None
+
         while not self._hid_stop.is_set():
             connected = _is_hid_device_connected(device_name)
+
             if connected != last:
                 last = connected
+
                 if connected:
                     print(f"[REMOTE-HID] '{device_name}' connected")
                     self.hid_connected.emit(device_name)
                 else:
                     print(f"[REMOTE-HID] '{device_name}' disconnected")
                     self.hid_disconnected.emit(device_name)
+
             self._hid_stop.wait(timeout=interval)
 
     # ------------------------------------------------------------------
@@ -391,8 +657,15 @@ class RemoteControlService(QObject):
     # ------------------------------------------------------------------
 
     def stop(self):
-        self._cancel_pending_center()
+        with self._btn_lock:
+            self._cancel_center_timer_locked()
+            self._cancel_reset_timer_locked()
+            self._btn_state = BtnState.IDLE
+            self._mouse_btn1_down = False
+            self._suppress_until_release = False
+
         self._hid_stop.set()
+
         if self._hid_capture:
             self._hid_capture.stop()
 
@@ -411,6 +684,8 @@ def _is_hid_device_connected(device_name):
             timeout=5,
         ).stdout
         return f'"Product" = "{device_name}"' in out
+
     except Exception as exc:
         print(f"[REMOTE-HID] connection check failed: {exc}")
+
     return False
