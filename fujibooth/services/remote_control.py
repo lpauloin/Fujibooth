@@ -33,15 +33,15 @@ from ..models.remote import RemoteButton
 # ------------------------------------------------------------------
 
 DEFAULT_KEY_MAP = {
-    Qt.Key.Key_VolumeUp.value:   RemoteButton.CAMERA,
+    Qt.Key.Key_VolumeUp.value: RemoteButton.CAMERA,
     Qt.Key.Key_VolumeDown.value: RemoteButton.PHOTO,
-    Qt.Key.Key_Up.value:         RemoteButton.UP,
-    Qt.Key.Key_Down.value:       RemoteButton.DOWN,
-    Qt.Key.Key_Left.value:       RemoteButton.LEFT,
-    Qt.Key.Key_Right.value:      RemoteButton.RIGHT,
-    Qt.Key.Key_Return.value:     RemoteButton.CENTER,
-    Qt.Key.Key_Space.value:      RemoteButton.CENTER,
-    Qt.Key.Key_Enter.value:      RemoteButton.CENTER,
+    Qt.Key.Key_Up.value: RemoteButton.UP,
+    Qt.Key.Key_Down.value: RemoteButton.DOWN,
+    Qt.Key.Key_Left.value: RemoteButton.LEFT,
+    Qt.Key.Key_Right.value: RemoteButton.RIGHT,
+    Qt.Key.Key_Return.value: RemoteButton.CENTER,
+    Qt.Key.Key_Space.value: RemoteButton.CENTER,
+    Qt.Key.Key_Enter.value: RemoteButton.CENTER,
 }
 
 QT_KEY_NAMES = {v.value: v.name for v in Qt.Key if isinstance(v.value, int)}
@@ -55,12 +55,14 @@ QT_KEY_NAMES = {v.value: v.name for v in Qt.Key if isinstance(v.value, int)}
 # ------------------------------------------------------------------
 BEAUTY_R1_REPORT_MAP = {
     # Report ID 3 — consumer control bits
-    (3, 0, 0x01): RemoteButton.CAMERA,  # Volume Increment
-    (3, 0, 0x02): RemoteButton.PHOTO,  # Volume Decrement
-    # Report ID 4 — mouse buttons (byte 0, bits 0-4) and wheel (byte 1)
-    # e.g. (4, 0, 0x01): RemoteButton.CENTER,  # mouse button 1
-    # Report ID 5 — 16-bit consumer usage
-    # e.g. (5, "word", 0x00E9): RemoteButton.CAMERA,
+    (3, 0, 0x01): RemoteButton.CAMERA,   # Volume Increment
+    (3, 0, 0x02): RemoteButton.PHOTO,    # Volume Decrement
+    # Report ID 5 — directional codes (sustained code repeated 3× after the ID 4 click)
+    # CENTER is handled via a 150ms debounce timer — not in this map
+    (5, "word", 0xC000): RemoteButton.UP,
+    (5, "word", 0xE000): RemoteButton.DOWN,
+    (5, "word", 0x0FD8): RemoteButton.RIGHT,
+    (5, "word", 0x0027): RemoteButton.LEFT,
 }
 
 
@@ -94,11 +96,24 @@ class HidDeviceCapture:
     def stop(self):
         self._stop.set()
 
+    def _log_all_hid_devices(self):
+        all_devices = hid.enumerate(0, 0)
+        if not all_devices:
+            print("[HID-ENUM] no HID devices found")
+            return
+        print(f"[HID-ENUM] {len(all_devices)} HID device(s) visible:")
+        for d in all_devices:
+            print(
+                f"[HID-ENUM]   VID={d['vendor_id']:#06x} PID={d['product_id']:#06x}"
+                f"  {d.get('manufacturer_string', '')} / {d.get('product_string', '')}"
+            )
+
     def _run(self):
         print(
-            f"[HID] capture thread started "
+            f"[HID] capture thread started — looking for "
             f"VID={self._vid:#06x} PID={self._pid:#06x}"
         )
+        self._log_all_hid_devices()
 
         while not self._stop.is_set():
             # Wait for the device to appear (polls every 2 s)
@@ -107,19 +122,24 @@ class HidDeviceCapture:
                 self._stop.wait(timeout=2.0)
                 continue
 
-            dev = hid.device()
             try:
-                dev.open(self._vid, self._pid)
-                dev.set_nonblocking(True)
-                print(
-                    f"[HID] device opened VID={self._vid:#06x} "
-                    f"PID={self._pid:#06x} — reading reports"
-                )
-                print("[HID] Press each button — copy the [HID-MAP] lines into BEAUTY_R1_REPORT_MAP")
+                dev = hid.Device(self._vid, self._pid)
+            except OSError as exc:
+                print(f"[HID] open failed: {exc}")
+                self._stop.wait(timeout=2.0)
+                continue
 
+            print(
+                f"[HID] device opened VID={self._vid:#06x} "
+                f"PID={self._pid:#06x} — reading reports"
+            )
+            print(
+                "[HID] Press each button — copy the [HID-MAP] lines into BEAUTY_R1_REPORT_MAP"
+            )
+
+            try:
                 while not self._stop.is_set():
-                    # read() with timeout; returns [] on timeout, None on error
-                    report = dev.read(64, timeout_ms=100)
+                    report = dev.read(64, 100)
                     if report:
                         report_id = report[0]
                         data = bytes(report[1:])
@@ -162,6 +182,8 @@ class RemoteControlService(QObject):
         self._hid_monitor_thread = None
         self._hid_stop = threading.Event()
         self._last_report = {}
+        self._center_timer = None
+        self._center_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Primary: hid library capture
@@ -195,9 +217,13 @@ class RemoteControlService(QObject):
                     key = (3, 0, mask)
                     mapped = BEAUTY_R1_REPORT_MAP.get(key)
                     if mapped:
-                        print(f"[HID-MAP]   (3, 0, {mask:#04x}): RemoteButton.{mapped.name}  ✓ mapped")
+                        print(
+                            f"[HID-MAP]   (3, 0, {mask:#04x}): RemoteButton.{mapped.name}  ✓ mapped"
+                        )
                     else:
-                        print(f"[HID-MAP]   (3, 0, {mask:#04x}): RemoteButton.???{hint}")
+                        print(
+                            f"[HID-MAP]   (3, 0, {mask:#04x}): RemoteButton.???{hint}"
+                        )
 
         elif report_id == 4 and data:
             buttons = data[0] & 0x1F
@@ -208,17 +234,25 @@ class RemoteControlService(QObject):
                     key = (4, 0, mask)
                     mapped = BEAUTY_R1_REPORT_MAP.get(key)
                     if mapped:
-                        print(f"[HID-MAP]   (4, 0, {mask:#04x}): RemoteButton.{mapped.name}  ✓ mapped")
+                        print(
+                            f"[HID-MAP]   (4, 0, {mask:#04x}): RemoteButton.{mapped.name}  ✓ mapped"
+                        )
                     else:
-                        print(f"[HID-MAP]   (4, 0, {mask:#04x}): RemoteButton.???{hint}")
+                        print(
+                            f"[HID-MAP]   (4, 0, {mask:#04x}): RemoteButton.???{hint}"
+                        )
             if wheel:
                 direction = "wheel_up" if wheel > 0 else "wheel_down"
                 key = (4, direction)
                 mapped = BEAUTY_R1_REPORT_MAP.get(key)
                 if mapped:
-                    print(f"[HID-MAP]   (4, \"{direction}\"): RemoteButton.{mapped.name}  ✓ mapped")
+                    print(
+                        f'[HID-MAP]   (4, "{direction}"): RemoteButton.{mapped.name}  ✓ mapped'
+                    )
                 else:
-                    print(f"[HID-MAP]   (4, \"{direction}\"): RemoteButton.???{hint}  (delta={wheel})")
+                    print(
+                        f'[HID-MAP]   (4, "{direction}"): RemoteButton.???{hint}  (delta={wheel})'
+                    )
 
         elif report_id == 5 and len(data) >= 2:
             code = data[0] | (data[1] << 8)
@@ -226,9 +260,13 @@ class RemoteControlService(QObject):
                 key = (5, "word", code)
                 mapped = BEAUTY_R1_REPORT_MAP.get(key)
                 if mapped:
-                    print(f"[HID-MAP]   (5, \"word\", {code:#06x}): RemoteButton.{mapped.name}  ✓ mapped")
+                    print(
+                        f'[HID-MAP]   (5, "word", {code:#06x}): RemoteButton.{mapped.name}  ✓ mapped'
+                    )
                 else:
-                    print(f"[HID-MAP]   (5, \"word\", {code:#06x}): RemoteButton.???{hint}")
+                    print(
+                        f'[HID-MAP]   (5, "word", {code:#06x}): RemoteButton.???{hint}'
+                    )
 
     def _decode_report(self, report_id, data):
         if not data:
@@ -240,28 +278,29 @@ class RemoteControlService(QObject):
                 if byte0 & mask:
                     btn = BEAUTY_R1_REPORT_MAP.get((3, 0, mask))
                     if btn:
-                        key = (report_id, mask)
+                        key = (3, mask)
                         if not self._last_report.get(key):
                             self._last_report[key] = True
                             return btn
                 else:
-                    self._last_report[(report_id, mask)] = False
+                    self._last_report[(3, mask)] = False
 
         elif report_id == 4:
-            buttons = data[0] & 0x1F
+            btn1 = bool(data[0] & 0x01)
+            btn1_was = self._last_report.get((4, "btn1"), False)
+
+            if btn1 and not btn1_was:
+                # button 1 just pressed → arm CENTER unless a direction code follows
+                self._last_report[(4, "btn1")] = True
+                self._arm_pending_center()
+            elif not btn1 and btn1_was:
+                # button 1 released → reset direction state for next press
+                self._last_report[(4, "btn1")] = False
+                for k in list(self._last_report):
+                    if isinstance(k, tuple) and k[0] == 5:
+                        self._last_report[k] = False
+
             wheel = ctypes.c_int8(data[1] if len(data) > 1 else 0).value
-            if buttons:
-                for bit in range(5):
-                    mask = 1 << bit
-                    if buttons & mask:
-                        btn = BEAUTY_R1_REPORT_MAP.get((4, 0, mask))
-                        if btn:
-                            key = (report_id, mask)
-                            if not self._last_report.get(key):
-                                self._last_report[key] = True
-                                return btn
-                    else:
-                        self._last_report[(report_id, 1 << bit)] = False
             if wheel:
                 btn = BEAUTY_R1_REPORT_MAP.get(
                     (4, "wheel_up") if wheel > 0 else (4, "wheel_down")
@@ -274,16 +313,32 @@ class RemoteControlService(QObject):
             if code:
                 btn = BEAUTY_R1_REPORT_MAP.get((5, "word", code))
                 if btn:
-                    key = (report_id, code)
+                    key = (5, code)
                     if not self._last_report.get(key):
                         self._last_report[key] = True
+                        self._cancel_pending_center()
                         return btn
-            else:
-                for k in list(self._last_report):
-                    if isinstance(k, tuple) and k[0] == 5:
-                        self._last_report[k] = False
 
         return None
+
+    def _arm_pending_center(self):
+        with self._center_lock:
+            if self._center_timer:
+                self._center_timer.cancel()
+            self._center_timer = threading.Timer(0.15, self._emit_center)
+            self._center_timer.start()
+
+    def _cancel_pending_center(self):
+        with self._center_lock:
+            if self._center_timer:
+                self._center_timer.cancel()
+                self._center_timer = None
+
+    def _emit_center(self):
+        with self._center_lock:
+            self._center_timer = None
+        print("[REMOTE] -> CENTER")
+        self.button_pressed.emit(RemoteButton.CENTER)
 
     # ------------------------------------------------------------------
     # Fallback: Qt keyboard interception
@@ -335,6 +390,7 @@ class RemoteControlService(QObject):
     # ------------------------------------------------------------------
 
     def stop(self):
+        self._cancel_pending_center()
         self._hid_stop.set()
         if self._hid_capture:
             self._hid_capture.stop()

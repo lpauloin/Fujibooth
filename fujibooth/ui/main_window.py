@@ -406,8 +406,13 @@ class MainWindow(QMainWindow):
             self._usb_monitor_started = True
 
         rc = self.settings.remote
-        if rc.enabled and rc.hid_device_name:
-            self.remote.start_hid_monitor(rc.hid_device_name)
+        if rc.enabled:
+            if rc.hid_device_name:
+                self.remote.start_hid_monitor(rc.hid_device_name)
+            if rc.hid_vendor_id and rc.hid_product_id:
+                self.remote.start_hid_capture(rc.hid_vendor_id, rc.hid_product_id)
+            else:
+                print("[REMOTE] hid_vendor_id/hid_product_id not set — HID capture disabled")
 
         if self.settings.app.fullscreen:
             self.showFullScreen()

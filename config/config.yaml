@@ -30,8 +30,8 @@ printing:
 remote:
   enabled: true
   hid_device_name: "Beauty-R1"   # paired as BLE keyboard (Minor Type: Keyboard)
-  # Key mapping is logged at runtime: watch for "[REMOTE] unmapped key=..." lines
-  # to identify button codes, then override DEFAULT_KEY_MAP if needed.
+  hid_vendor_id: 0x0E05           # Beauty-R1 VID — run app once to see [HID-ENUM] if wrong
+  hid_product_id: 0x0A00          # Beauty-R1 PID
 
 ui:
   background_color: "#111111"
