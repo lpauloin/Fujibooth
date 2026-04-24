@@ -104,6 +104,7 @@ class MainWindow(QMainWindow):
 
         print("[UI] building services")
         self.repository = PhotoRepository(
+            captures_dir=settings.captures_path,
             output_dir=settings.output_path,
             extensions=settings.storage.accepted_extensions,
             filename_pattern=settings.storage.filename_pattern,
@@ -113,7 +114,7 @@ class MainWindow(QMainWindow):
             enabled=settings.printing.enabled,
             command=settings.printing.command,
         )
-        self.backend = FujifilmSdkBackend(settings=settings)
+        self.backend = FujifilmSdkBackend(settings=settings, repository=self.repository)
         print(f"[UI] backend selected: {self.backend.__class__.__name__}")
 
         self.remote = RemoteControlService(parent=self)
@@ -733,13 +734,11 @@ class MainWindow(QMainWindow):
         self.live_view.set_pixmap(pixmap)
 
     @Slot(str)
-    def on_photo_captured(self, source_path_str):
-        print(f"[UI] on_photo_captured source={source_path_str}")
-        source_path = Path(source_path_str)
-        stored = self.repository.store(source_path)
-        print(f"[UI] on_photo_captured stored={stored}")
+    def on_photo_captured(self, display_path_str):
+        print(f"[UI] on_photo_captured path={display_path_str}")
+        display_path = Path(display_path_str)
 
-        freeze_pixmap = QPixmap(str(stored))
+        freeze_pixmap = QPixmap(str(display_path))
         if freeze_pixmap.isNull():
             print("[UI] on_photo_captured freeze pixmap is null")
             self._set_state(BoothState.ERROR)
@@ -748,7 +747,7 @@ class MainWindow(QMainWindow):
             return
 
         self.current_freeze_pixmap = freeze_pixmap
-        self.selected_photo = stored
+        self.selected_photo = display_path
         self._set_state(BoothState.FREEZE)
         self._apply_freeze_ui()
 

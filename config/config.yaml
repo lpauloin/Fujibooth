@@ -14,12 +14,11 @@ camera:
   sdk:
     sdk_root: "./sdk"
     library_path: ""
-    capture_dir: "./runtime/sdk_captures"
     live_view_interval_ms: 120
 
 storage:
+  captures_dir: "./runtime/captures"
   output_dir: "./runtime/output"
-  incoming_dir: "./runtime/incoming"
   accepted_extensions: [".jpg", ".jpeg", ".png", ".raf", ".heic"]
   filename_pattern: "%Y%m%d_%H%M%S"
   frame_path: "./config/frame.png"

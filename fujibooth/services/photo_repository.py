@@ -4,12 +4,12 @@ import shutil
 
 from PIL import Image as PILImage
 
-FRAMED_SUFFIX = "_framed"
-
 
 class PhotoRepository:
-    def __init__(self, output_dir, extensions, filename_pattern, frame_path):
+    def __init__(self, captures_dir, output_dir, extensions, filename_pattern, frame_path):
+        self.captures_dir = captures_dir
         self.output_dir = output_dir
+        self.captures_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.extensions = {ext.lower() for ext in extensions}
         self.filename_pattern = filename_pattern
@@ -39,40 +39,39 @@ class PhotoRepository:
             print(f"[REPO] _apply_frame error: {exc}")
             return False
 
+    def _unique_path(self, directory, stem, suffix):
+        target = directory / f"{stem}{suffix}"
+        counter = 1
+        while target.exists():
+            target = directory / f"{stem}_{counter}{suffix}"
+            counter += 1
+        return target
+
     def store(self, source_path):
         suffix = source_path.suffix.lower()
         if suffix not in self.extensions:
             raise ValueError(f"Unsupported file extension: {source_path.suffix}")
         stem = datetime.now().strftime(self.filename_pattern)
-        target = self.output_dir / f"{stem}{suffix}"
-        counter = 1
-        while target.exists():
-            target = self.output_dir / f"{stem}_{counter}{suffix}"
-            counter += 1
-        shutil.copy2(source_path, target)
-        print(f"[REPO] original saved: {target}")
+
+        capture_target = self._unique_path(self.captures_dir, stem, suffix)
+        shutil.move(str(source_path), capture_target)
+        print(f"[REPO] capture saved: {capture_target}")
 
         if self._has_frame:
-            framed_target = self.output_dir / f"{target.stem}{FRAMED_SUFFIX}.jpg"
-            if self._apply_frame(target, framed_target):
-                print(f"[REPO] framed version saved: {framed_target}")
-                return framed_target
-            print("[REPO] frame apply failed, returning original")
+            output_target = self._unique_path(self.output_dir, stem, ".jpg")
+            if self._apply_frame(capture_target, output_target):
+                print(f"[REPO] framed output saved: {output_target}")
+                return output_target
+            print("[REPO] frame apply failed, returning capture")
 
-        return target
+        return capture_target
 
     def recent(self, limit=50):
+        search_dir = self.output_dir if self._has_frame else self.captures_dir
         photos = [
             path
-            for path in self.output_dir.iterdir()
-            if path.is_file()
-            and path.suffix.lower() in self.extensions
-            and self._is_displayable(path)
+            for path in search_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in self.extensions
         ]
         photos.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return photos[:limit]
-
-    def _is_displayable(self, path):
-        if self._has_frame:
-            return path.stem.endswith(FRAMED_SUFFIX)
-        return not path.stem.endswith(FRAMED_SUFFIX)

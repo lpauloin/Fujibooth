@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields as dc_fields
 from pathlib import Path
 import os
 
@@ -26,7 +26,6 @@ class UsbConfig:
 class SdkConfig:
     sdk_root: str = "./sdk"
     library_path: str = ""
-    capture_dir: str = "./runtime/sdk_captures"
     live_view_interval_ms: int = 120
 
 
@@ -38,9 +37,11 @@ class CameraConfig:
 
 @dataclass(slots=True)
 class StorageConfig:
-    output_dir: str = "./runtime/output"
-    incoming_dir: str = "./runtime/incoming"
-    accepted_extensions: list[str] = field(default_factory=lambda: [".jpg", ".jpeg", ".png", ".raf", ".heic"])
+    captures_dir: str = "./runtime/captures"   # originals from SDK
+    output_dir: str = "./runtime/output"       # framed photos
+    accepted_extensions: list[str] = field(
+        default_factory=lambda: [".jpg", ".jpeg", ".png", ".raf", ".heic"]
+    )
     filename_pattern: str = "%Y%m%d_%H%M%S"
     frame_path: str = ""
 
@@ -80,16 +81,12 @@ class Settings:
     config_path: Path | None = None
 
     @property
+    def captures_path(self):
+        return Path(os.path.expanduser(self.storage.captures_dir)).resolve()
+
+    @property
     def output_path(self):
         return Path(os.path.expanduser(self.storage.output_dir)).resolve()
-
-    @property
-    def incoming_path(self):
-        return Path(os.path.expanduser(self.storage.incoming_dir)).resolve()
-
-    @property
-    def sdk_capture_path(self):
-        return Path(os.path.expanduser(self.camera.sdk.capture_dir)).resolve()
 
     @property
     def frame_path(self):
@@ -108,6 +105,11 @@ def _merge_dict(defaults, override):
     return merged
 
 
+def _build(cls, data):
+    known = {f.name for f in dc_fields(cls)}
+    return cls(**{k: v for k, v in data.items() if k in known})
+
+
 def _dataclass_to_dict(settings):
     return asdict(settings) | {"config_path": settings.config_path}
 
@@ -116,20 +118,19 @@ def build_settings(payload, config_path=None):
     defaults = _dataclass_to_dict(Settings())
     merged = _merge_dict(defaults, payload)
     settings = Settings(
-        app=AppConfig(**merged["app"]),
+        app=_build(AppConfig, merged["app"]),
         camera=CameraConfig(
-            usb=UsbConfig(**merged["camera"]["usb"]),
-            sdk=SdkConfig(**merged["camera"]["sdk"]),
+            usb=_build(UsbConfig, merged["camera"]["usb"]),
+            sdk=_build(SdkConfig, merged["camera"]["sdk"]),
         ),
-        storage=StorageConfig(**merged["storage"]),
-        printing=PrintingConfig(**merged["printing"]),
-        ui=UiConfig(**merged["ui"]),
-        remote=RemoteConfig(**merged["remote"]),
+        storage=_build(StorageConfig, merged["storage"]),
+        printing=_build(PrintingConfig, merged["printing"]),
+        ui=_build(UiConfig, merged["ui"]),
+        remote=_build(RemoteConfig, merged["remote"]),
         config_path=config_path,
     )
+    settings.captures_path.mkdir(parents=True, exist_ok=True)
     settings.output_path.mkdir(parents=True, exist_ok=True)
-    settings.incoming_path.mkdir(parents=True, exist_ok=True)
-    settings.sdk_capture_path.mkdir(parents=True, exist_ok=True)
     return settings
 
 
@@ -147,16 +148,12 @@ def load_settings(config_path=None):
         if candidate.exists():
             payload = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
             settings = build_settings(payload, config_path=candidate)
-            print(f"[CONFIG] fichier charge: {candidate}")
-            print("[CONFIG] backend camera: fujifilm_sdk")
-            print(f"[CONFIG] output_dir: {settings.output_path}")
-            print(f"[CONFIG] incoming_dir: {settings.incoming_path}")
-            print(f"[CONFIG] sdk_capture_dir: {settings.sdk_capture_path}")
+            print(f"[CONFIG] loaded: {candidate}")
+            print(f"[CONFIG] captures_dir: {settings.captures_path}")
+            print(f"[CONFIG] output_dir:   {settings.output_path}")
             return settings
     settings = build_settings({}, config_path=None)
-    print("[CONFIG] aucun fichier de configuration trouve, utilisation des valeurs par defaut")
-    print("[CONFIG] backend camera: fujifilm_sdk")
-    print(f"[CONFIG] output_dir: {settings.output_path}")
-    print(f"[CONFIG] incoming_dir: {settings.incoming_path}")
-    print(f"[CONFIG] sdk_capture_dir: {settings.sdk_capture_path}")
+    print("[CONFIG] no config file found, using defaults")
+    print(f"[CONFIG] captures_dir: {settings.captures_path}")
+    print(f"[CONFIG] output_dir:   {settings.output_path}")
     return settings

@@ -10,17 +10,18 @@ from .base import CameraBackend
 
 class FujifilmSdkBackend(CameraBackend):
     def __init__(
-        self, settings, *, adapter=None, capture_dir=None, live_view_interval_ms=None
+        self, settings, *, adapter=None, repository=None, live_view_interval_ms=None
     ):
         super().__init__()
         self.settings = settings
+        self.repository = repository
 
         self.adapter = adapter or FujifilmSdkAdapter(
             sdk_root=settings.camera.sdk.sdk_root,
             xapi_path=settings.camera.sdk.library_path or None,
         )
 
-        self.capture_dir = capture_dir or settings.sdk_capture_path
+        self.capture_dir = settings.captures_path
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
         interval_ms = live_view_interval_ms or settings.camera.sdk.live_view_interval_ms
@@ -725,6 +726,13 @@ class FujifilmSdkBackend(CameraBackend):
             return
 
         self.emit_backend_state(BackendState.DOWNLOADING)
+        if self.repository is not None:
+            try:
+                path = self.repository.store(path)
+            except Exception as exc:
+                print(f"[SDK] repository.store failed: {exc}")
+                self.error.emit(str(exc))
+                return
         self._emit_photo(path)
 
         if was_live and self._safe_is_session_open() and not self._stopping:

@@ -142,7 +142,6 @@ camera:
 
 storage:
   output_dir: ./runtime/output
-  incoming_dir: ./runtime/incoming
   accepted_extensions: [ ".jpg", ".jpeg", ".png", ".raf", ".heic" ]
   filename_pattern: "%Y%m%d_%H%M%S"
   frame_path: ./config/frame.png   # PNG overlay composited onto every photo
@@ -210,7 +209,6 @@ The app creates these directories automatically:
 ```
 runtime/
 ├── output/          # final photos (with frame overlay)
-├── incoming/        # raw captures from the SDK
 └── sdk_captures/    # temporary SDK capture working directory
 ```
 
