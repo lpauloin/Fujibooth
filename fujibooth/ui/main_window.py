@@ -98,6 +98,8 @@ class MainWindow(QMainWindow):
         self._remote_gallery_index = -1
         self._remote_control_index = 0
         self._remote_in_setting = False
+        self._remote_connected = False
+        self._badges_visible = True
 
         self.setWindowTitle(settings.app.window_title)
         self.setStyleSheet(f"background: {settings.ui.background_color}; color: white;")
@@ -162,6 +164,8 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._wire_signals()
         self.refresh_gallery()
+        self._remote_gallery_index = 0
+        self.gallery.set_remote_selection(0)
         self._set_exposure_controls_enabled(False)
         self._apply_idle_ui()
         self._debug_dump_ui_state("after __init__")
@@ -293,6 +297,7 @@ class MainWindow(QMainWindow):
             f"[UI] _show_camera_badge visible={visible} "
             f"camera_connected={self._camera_connected} camera_label={self._camera_label}"
         )
+        self._badges_visible = visible
         if visible:
             text = (
                 f"{self._camera_label} connected"
@@ -305,8 +310,20 @@ class MainWindow(QMainWindow):
                 else self.settings.ui.status_disconnected_color
             )
             self.live_view.set_status(text, color)
+            self._refresh_remote_badge()
         else:
             self.live_view.clear_status()
+            self.live_view.clear_remote_status()
+
+    def _refresh_remote_badge(self):
+        if not self._badges_visible:
+            return
+        if self._remote_connected:
+            self.live_view.set_remote_status(
+                "Remote connected", self.settings.ui.status_connected_color
+            )
+        else:
+            self.live_view.clear_remote_status()
 
     def _set_exposure_controls_enabled(self, enabled):
         print(f"[UI] _set_exposure_controls_enabled enabled={enabled}")
@@ -488,14 +505,16 @@ class MainWindow(QMainWindow):
         if button is RemoteButton.UP:
             if self._remote_in_setting:
                 self._remote_setting_navigate(-1)
-            elif self.state is BoothState.LIVE_VIEW and self._camera_connected:
+            elif self._camera_connected:
+                if self.state is BoothState.PHOTO_SELECTED:
+                    self._return_to_live_view()
                 self._switch_remote_focus(RemoteFocus.CONTROLS)
             return
 
         if button is RemoteButton.DOWN:
             if self._remote_in_setting:
                 self._remote_setting_navigate(1)
-            elif self.state is BoothState.LIVE_VIEW and self._camera_connected:
+            elif self._camera_connected:
                 self._switch_remote_focus(RemoteFocus.SLIDESHOW)
             return
 
@@ -873,6 +892,8 @@ class MainWindow(QMainWindow):
         self.print_button_timer.stop()
         self.print_button.hide()
         self._reset_remote_state()
+        self._remote_gallery_index = 0
+        self.gallery.set_remote_selection(0)
 
         if self._camera_connected:
             self._set_state(BoothState.LIVE_VIEW)
@@ -1061,16 +1082,14 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_remote_hid_connected(self, name):
         print(f"[UI] remote HID connected name={name}")
-        self.live_view.set_remote_status(
-            "Remote connected", self.settings.ui.status_connected_color
-        )
+        self._remote_connected = True
+        self._refresh_remote_badge()
 
     @Slot(str)
     def _on_remote_hid_disconnected(self, name):
         print(f"[UI] remote HID disconnected name={name}")
-        self.live_view.set_remote_status(
-            "Remote disconnected", self.settings.ui.status_disconnected_color
-        )
+        self._remote_connected = False
+        self._refresh_remote_badge()
 
     def refresh_gallery(self):
         photos = self.repository.recent(limit=50)

@@ -198,31 +198,17 @@ class LiveViewWidget(QFrame):
 class ThumbnailButton(QPushButton):
     photo_clicked = Signal(str)
 
-    _STYLE_NORMAL = """
-        QPushButton {
-            border: 2px solid #333333;
-            border-radius: 12px;
-            background: #151515;
-            padding: 0px;
-        }
-        QPushButton:hover { border: 2px solid #666666; }
-        QPushButton:pressed { border: 2px solid #aaaaaa; }
-    """
-    _STYLE_SELECTED = """
-        QPushButton {
-            border: 3px solid #dc2626;
-            border-radius: 12px;
-            background: #1a0808;
-            padding: 0px;
-        }
-    """
+    _BORDER_NORMAL = "border: 2px solid #444444; border-radius: 12px; background: transparent;"
+    _BORDER_SELECTED = "border: 3px solid #dc2626; border-radius: 12px; background: transparent;"
 
     def __init__(self, photo_path, width, height):
         super().__init__()
         self.photo_path = photo_path
         self.setFixedSize(width, height)
         self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet(self._STYLE_NORMAL)
+        self.setStyleSheet("""
+            QPushButton { border: none; border-radius: 12px; background: #151515; padding: 0px; }
+        """)
 
         pixmap = QPixmap(str(photo_path))
         if not pixmap.isNull():
@@ -234,10 +220,18 @@ class ThumbnailButton(QPushButton):
             self.setIcon(QIcon(scaled))
             self.setIconSize(self.size())
 
+        # Overlay drawn on top of the icon — the only place borders are visible
+        self._border = QFrame(self)
+        self._border.setGeometry(0, 0, width, height)
+        self._border.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._border.setAttribute(Qt.WA_StyledBackground, True)
+        self._border.setStyleSheet(self._BORDER_NORMAL)
+        self._border.raise_()
+
         self.clicked.connect(lambda: self.photo_clicked.emit(str(self.photo_path)))
 
     def set_remote_selected(self, selected):
-        self.setStyleSheet(self._STYLE_SELECTED if selected else self._STYLE_NORMAL)
+        self._border.setStyleSheet(self._BORDER_SELECTED if selected else self._BORDER_NORMAL)
 
 
 class GalleryWidget(QWidget):
