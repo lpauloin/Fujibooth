@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
 
         self._setup_ui()
         self._wire_signals()
+        self.live_view.load_frame(settings.frame_path if settings.frame_path else None)
         self.refresh_gallery()
         self._remote_gallery_index = 0
         self.gallery.set_remote_selection(0)
@@ -227,6 +228,7 @@ class MainWindow(QMainWindow):
         self.print_button.clicked.connect(self.on_print_clicked)
 
         self.exposure_bar.changed.connect(self.on_exposure_changed)
+        self.exposure_bar.frame_toggled.connect(self.live_view.set_frame_visible)
         self.print_button_timer.timeout.disconnect()
         self.print_button_timer.timeout.connect(self.print_button.hide)
 
@@ -561,6 +563,8 @@ class MainWindow(QMainWindow):
             self.aperture_combo,
         ]
         enabled = [i for i, c in enumerate(combos) if c.isEnabled() and c.count() > 0]
+        if self.repository.has_frame:
+            enabled.append(4)
         if not enabled:
             return
         try:
@@ -571,6 +575,9 @@ class MainWindow(QMainWindow):
         self.exposure_bar.set_focused_control(self._remote_control_index)
 
     def _remote_open_setting(self):
+        if self._remote_control_index == 4:
+            self.exposure_bar.toggle_frame()
+            return
         combos = [
             self.ae_mode_combo,
             self.iso_combo,
@@ -826,7 +833,7 @@ class MainWindow(QMainWindow):
             print("[UI] on_live_view_updated ignored: state is freeze/photo_selected")
             return
 
-        self.live_view.set_pixmap(pixmap)
+        self.live_view.set_pixmap(pixmap, apply_frame=True)
 
     @Slot(str)
     def on_photo_captured(self, display_path_str):
@@ -871,7 +878,7 @@ class MainWindow(QMainWindow):
             self.live_view.hide_overlay()
 
             if not self.current_live_pixmap.isNull():
-                self.live_view.set_pixmap(self.current_live_pixmap)
+                self.live_view.set_pixmap(self.current_live_pixmap, apply_frame=True)
 
             self.message_label.setText("Tap the image to start the photobooth")
             self._switch_remote_focus(RemoteFocus.CONTROLS)

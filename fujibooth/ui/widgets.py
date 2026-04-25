@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon, QMouseEvent, QPixmap, QResizeEvent, QWheelEvent
+from PySide6.QtGui import QIcon, QMouseEvent, QPainter, QPixmap, QResizeEvent, QWheelEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -76,6 +76,10 @@ class LiveViewWidget(QFrame):
         self.remote_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.remote_badge.hide()
 
+        self._frame_pixmap = QPixmap()
+        self._show_frame = False
+        self._apply_frame_to_display = False
+
         self.image_label.clicked.connect(self.clicked)
         self._apply_frame_style()
 
@@ -116,8 +120,20 @@ class LiveViewWidget(QFrame):
             badge.raise_()
             y += badge.height() + 8
 
-    def set_pixmap(self, pixmap):
+    def set_pixmap(self, pixmap, apply_frame=False):
         self._pixmap = pixmap
+        self._apply_frame_to_display = apply_frame
+        self._render_pixmap()
+
+    def load_frame(self, path):
+        if path:
+            self._frame_pixmap = QPixmap(str(path))
+        else:
+            self._frame_pixmap = QPixmap()
+        self._render_pixmap()
+
+    def set_frame_visible(self, enabled):
+        self._show_frame = enabled
         self._render_pixmap()
 
     def _render_pixmap(self):
@@ -133,6 +149,18 @@ class LiveViewWidget(QFrame):
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
+
+        if self._show_frame and self._apply_frame_to_display and not self._frame_pixmap.isNull():
+            frame = self._frame_pixmap.scaled(
+                scaled.size(),
+                Qt.IgnoreAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            painter = QPainter(scaled)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            painter.drawPixmap(0, 0, frame)
+            painter.end()
+
         self.image_label.setPixmap(scaled)
 
     def show_overlay_text(self, text, font_px=110, background="rgba(0,0,0,0.55)"):
