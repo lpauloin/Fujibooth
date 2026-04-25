@@ -370,7 +370,7 @@ class MainWindow(QMainWindow):
         print("[UI] _apply_freeze_ui()")
         self._show_gallery(False)
         self.print_button.hide()
-        self.live_view.set_freeze_frame(True)
+        self.live_view.set_freeze_frame(False)
         self._show_camera_badge(False)
 
     def _apply_photo_selected_ui(self):
