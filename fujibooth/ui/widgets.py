@@ -105,11 +105,13 @@ class LiveViewWidget(QFrame):
         self._apply_frame_style()
 
     def _update_status_badge_position(self):
-        y = 20
-        for badge in (self.status_badge, self.remote_badge):
-            if badge.isHidden():
-                continue
+        visible = [b for b in (self.status_badge, self.remote_badge) if not b.isHidden()]
+        for badge in visible:
             badge.adjustSize()
+        max_w = max((b.width() for b in visible), default=0)
+        y = 20
+        for badge in visible:
+            badge.setFixedWidth(max_w)
             badge.move(20, y)
             badge.raise_()
             y += badge.height() + 8
