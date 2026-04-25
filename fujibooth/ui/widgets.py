@@ -86,10 +86,15 @@ class LiveViewWidget(QFrame):
         self._render_pixmap()
 
     def _apply_frame_style(self):
-        border = "10px solid #2f80ff" if self._freeze_frame else "none"
+        if self._freeze_frame:
+            border = "3px solid rgba(255, 255, 255, 0.75)"
+            bg = "#050505"
+        else:
+            border = "none"
+            bg = "#080808"
         self.image_label.setStyleSheet(f"""
             QLabel {{
-                background: #000000;
+                background: {bg};
                 border-radius: 18px;
                 border: {border};
             }}
@@ -270,9 +275,6 @@ class GalleryWidget(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self.layout.addStretch(1)
-
-    def get_horizontal_scrollbar(self):
-        return self.scroll.horizontalScrollBar()
 
     def set_photos(self, photos):
         self._reset_layout()

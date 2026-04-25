@@ -4,10 +4,10 @@ from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QLabel,
     QMainWindow,
     QPushButton,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -46,34 +46,12 @@ QPushButton:pressed {
 """
 
 MESSAGE_STYLE = (
-    "color: #ebebf5;"
-    "font-size: 20px;"
-    "font-weight: 500;"
-    "padding: 4px 0;"
-    "opacity: 0.7;"
+    "color: #636366;"
+    "font-size: 14px;"
+    "font-weight: 400;"
+    "letter-spacing: 0.3px;"
+    "padding: 2px 0;"
 )
-
-SLIDER_STYLE = """
-QSlider::groove:horizontal {
-    background: #1c1c1e;
-    height: 4px;
-    border-radius: 2px;
-}
-QSlider::handle:horizontal {
-    background: #636366;
-    width: 16px;
-    height: 16px;
-    margin: -6px 0;
-    border-radius: 8px;
-}
-QSlider::handle:horizontal:hover {
-    background: #aeaeb2;
-}
-QSlider::sub-page:horizontal {
-    background: #48484a;
-    border-radius: 2px;
-}
-"""
 
 
 class MainWindow(QMainWindow):
@@ -90,7 +68,6 @@ class MainWindow(QMainWindow):
         self.countdown_value = settings.app.countdown_seconds
 
         self._is_shutting_down = False
-        self._gallery_scrollbar = None
         self._usb_monitor_started = False
         self._camera_connected = False
         self._camera_label = "FUJIFILM"
@@ -168,6 +145,12 @@ class MainWindow(QMainWindow):
         self.gallery.set_remote_selection(0)
         self._set_exposure_controls_enabled(False)
         self._apply_idle_ui()
+        photos = self.repository.recent(limit=1)
+        if photos:
+            self.on_photo_selected(str(photos[0]))
+            self.return_timer.stop()
+            self.print_button_timer.stop()
+            self.print_button.hide()
         self._debug_dump_ui_state("after __init__")
 
     def _debug_dump_ui_state(self, origin):
@@ -213,22 +196,25 @@ class MainWindow(QMainWindow):
         self.print_button.hide()
         layout.addWidget(self.print_button, alignment=Qt.AlignCenter)
 
+        self.gallery_card = QFrame()
+        self.gallery_card.setObjectName("GalleryCard")
+        self.gallery_card.setStyleSheet("""
+            QFrame#GalleryCard {
+                background: #0a0a0b;
+                border-radius: 16px;
+                border: 1px solid #1c1c1e;
+            }
+        """)
+        card_layout = QVBoxLayout(self.gallery_card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+
         self.gallery = GalleryWidget(
             self.settings.ui.thumbnail_width,
             self.settings.ui.thumbnail_height,
         )
         self.gallery.setFixedHeight(self.settings.ui.bottom_gallery_height)
-        layout.addWidget(self.gallery)
-
-        self.gallery_slider = QSlider(Qt.Horizontal)
-        self.gallery_slider.setMinimum(0)
-        self.gallery_slider.setMaximum(0)
-        self.gallery_slider.setSingleStep(60)
-        self.gallery_slider.setPageStep(300)
-        self.gallery_slider.setEnabled(False)
-        self.gallery_slider.setFixedHeight(20)
-        self.gallery_slider.setStyleSheet(SLIDER_STYLE)
-        layout.addWidget(self.gallery_slider)
+        card_layout.addWidget(self.gallery)
+        layout.addWidget(self.gallery_card)
 
         self.setCentralWidget(root)
         print("[UI] _setup_ui() done")
@@ -257,28 +243,7 @@ class MainWindow(QMainWindow):
         self.usb_monitor.connected.connect(self._on_usb_monitor_connected)
         self.usb_monitor.disconnected.connect(self._on_usb_monitor_disconnected)
 
-        self._gallery_scrollbar = self.gallery.get_horizontal_scrollbar()
-        if self._gallery_scrollbar is not None:
-            self.gallery_slider.valueChanged.connect(self._gallery_scrollbar.setValue)
-            self._gallery_scrollbar.valueChanged.connect(self.gallery_slider.setValue)
-            self._gallery_scrollbar.rangeChanged.connect(
-                self._sync_gallery_slider_range
-            )
-            self._sync_gallery_slider_range(
-                self._gallery_scrollbar.minimum(),
-                self._gallery_scrollbar.maximum(),
-            )
-
         print("[UI] _wire_signals() done")
-
-    @Slot(int, int)
-    def _sync_gallery_slider_range(self, minimum, maximum):
-        print(f"[UI] _sync_gallery_slider_range min={minimum} max={maximum}")
-        self.gallery_slider.blockSignals(True)
-        self.gallery_slider.setMinimum(minimum)
-        self.gallery_slider.setMaximum(maximum)
-        self.gallery_slider.setEnabled(maximum > minimum)
-        self.gallery_slider.blockSignals(False)
 
     def _set_state(self, state):
         if self.state != state:
@@ -289,8 +254,7 @@ class MainWindow(QMainWindow):
 
     def _show_gallery(self, visible):
         print(f"[UI] _show_gallery visible={visible}")
-        self.gallery.setVisible(visible)
-        self.gallery_slider.setVisible(visible)
+        self.gallery_card.setVisible(visible)
 
     def _show_camera_badge(self, visible):
         print(
@@ -563,6 +527,12 @@ class MainWindow(QMainWindow):
             self.exposure_bar.set_focused_control(-1)
             if self._remote_gallery_index >= 0:
                 self.gallery.set_remote_selection(self._remote_gallery_index)
+                photos = self.repository.recent(limit=50)
+                if self._remote_gallery_index < len(photos):
+                    self.on_photo_selected(str(photos[self._remote_gallery_index]))
+                    self.return_timer.stop()
+                    self.print_button_timer.stop()
+                    self.print_button.hide()
         else:
             self.gallery.set_remote_selection(-1)
             self.exposure_bar.set_focused_control(self._remote_control_index)
@@ -904,6 +874,7 @@ class MainWindow(QMainWindow):
                 self.live_view.set_pixmap(self.current_live_pixmap)
 
             self.message_label.setText("Tap the image to start the photobooth")
+            self._switch_remote_focus(RemoteFocus.CONTROLS)
         else:
             self._set_state(BoothState.WAITING_FOR_CAMERA)
             self._apply_idle_ui()
@@ -1095,13 +1066,6 @@ class MainWindow(QMainWindow):
         photos = self.repository.recent(limit=50)
         print(f"[UI] refresh_gallery photos={len(photos)}")
         self.gallery.set_photos(photos)
-
-        if self._gallery_scrollbar is not None:
-            self._sync_gallery_slider_range(
-                self._gallery_scrollbar.minimum(),
-                self._gallery_scrollbar.maximum(),
-            )
-            self.gallery_slider.setValue(self._gallery_scrollbar.value())
 
 
 def run_app(settings):
