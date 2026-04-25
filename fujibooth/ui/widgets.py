@@ -144,7 +144,24 @@ class LiveViewWidget(QFrame):
         if self.image_label.width() <= 0 or self.image_label.height() <= 0:
             return
 
-        scaled = self._pixmap.scaled(
+        src = self._pixmap
+
+        # Crop live view to match the capture aspect ratio (SDK delivers 4:3,
+        # captures are 3:2). Use the frame PNG ratio as the reference.
+        if self._apply_frame_to_display and not self._frame_pixmap.isNull():
+            target_ratio = self._frame_pixmap.width() / self._frame_pixmap.height()
+            src_ratio = src.width() / src.height()
+            if abs(src_ratio - target_ratio) > 0.005:
+                if src_ratio > target_ratio:
+                    new_w = int(src.height() * target_ratio)
+                    x = (src.width() - new_w) // 2
+                    src = src.copy(x, 0, new_w, src.height())
+                else:
+                    new_h = int(src.width() / target_ratio)
+                    y = (src.height() - new_h) // 2
+                    src = src.copy(0, y, src.width(), new_h)
+
+        scaled = src.scaled(
             self.image_label.size(),
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
