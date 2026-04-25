@@ -155,7 +155,6 @@ class FrameColumn(_ColumnBase):
 
         self.button = QPushButton("OFF")
         self.button.setCheckable(True)
-        self.button.setMinimumHeight(42)
         self.button.setStyleSheet(FRAME_BUTTON_STYLE)
         self.button.toggled.connect(self._on_toggled)
         layout.addWidget(self.button)
