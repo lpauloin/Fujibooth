@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtGui import QImage
 import logging
 
-from .adapter import CameraDescriptor
+from .adapter import AdapterStopping, CameraDescriptor
 from .xsdk_ctypes import (
     FujiSdkLibrary,
     SDK_LIVEVIEW_MODE1,
@@ -25,6 +25,7 @@ from .xsdk_ctypes import (
     XSDK_PRIORITY_PC,
     image_suffix_for_format,
 )
+from ..models.state import WrapperState
 
 logger = logging.getLogger(__name__)
 
@@ -220,12 +221,10 @@ class FujifilmSdkAdapter:
         self.camera_handle = None
 
         self._state_lock = threading.RLock()
+        self._state_changed = threading.Condition(self._state_lock)
         self._sdk_lock = threading.RLock()
 
-        self._connected = False
-        self._live_view_enabled = False
-        self._capture_in_progress = False
-        self._stopping = False
+        self._state = WrapperState.DISCONNECTED
 
         self._last_frame = QImage()
 
@@ -233,9 +232,7 @@ class FujifilmSdkAdapter:
         self._min_live_poll_interval_s = 0.10
         self._camera_model = None
 
-        logger.debug(
-            f"init sdk_root={self.sdk_root} xapi_path={self.xapi_path}"
-        )
+        logger.debug(f"init sdk_root={self.sdk_root} xapi_path={self.xapi_path}")
 
     # ------------------------------------------------------------------
     # Session helpers
@@ -243,41 +240,75 @@ class FujifilmSdkAdapter:
 
     def ensure_session(self):
         with self._state_lock:
-            if self.lib is None or self.camera_handle is None or not self._connected:
+            if (
+                self.lib is None
+                or self.camera_handle is None
+                or self._state in {WrapperState.DISCONNECTED, WrapperState.STOPPING}
+            ):
                 raise RuntimeError("Camera SDK session not open")
             return self.lib, self.camera_handle
 
     def is_connected(self):
         with self._state_lock:
-            return self._connected
+            return self._state not in {WrapperState.DISCONNECTED, WrapperState.STOPPING}
+
+    def is_stopping(self):
+        with self._state_lock:
+            return self._state == WrapperState.STOPPING
+
+    def _set_state(self, state, reason=""):
+        with self._state_changed:
+            previous = self._state
+            if previous is WrapperState.STOPPING and state is not WrapperState.DISCONNECTED:
+                logger.debug(f"adapter state transition ignored while stopping: {previous.name} -> {state.name} reason={reason}")
+                return False
+            if previous is state:
+                return True
+            self._state = state
+            logger.debug(f"adapter state {previous.name} -> {state.name} reason={reason}")
+            self._state_changed.notify_all()
+            return True
 
     def _clear_session_state(self):
-        with self._state_lock:
+        with self._state_changed:
             self.camera_handle = None
-            self._connected = False
-            self._live_view_enabled = False
-            self._capture_in_progress = False
             self._camera_opened_monotonic = None
+            self._camera_model = None
+            previous = self._state
+            self._state = WrapperState.DISCONNECTED
+            if previous is not WrapperState.DISCONNECTED:
+                logger.debug(f"adapter state {previous.name} -> DISCONNECTED reason=clear session")
+            self._state_changed.notify_all()
+
+    def _wait_interruptible(self, seconds):
+        with self._state_changed:
+            if self._state is WrapperState.STOPPING:
+                raise AdapterStopping("adapter is stopping")
+            stopped = self._state_changed.wait_for(
+                lambda: self._state is WrapperState.STOPPING,
+                timeout=max(0.0, seconds),
+            )
+            if stopped:
+                raise AdapterStopping("adapter is stopping")
+
+    def signal_stop(self):
+        self._set_state(WrapperState.STOPPING, "stop requested")
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def start(self):
-        with self._state_lock, self._sdk_lock:
+        with self._sdk_lock:
             logger.debug("start()")
-            self._stopping = False
+            self._clear_session_state()
             self.lib = FujiSdkLibrary(self.sdk_root, self.xapi_path)
             self.lib.load()
             self.lib.init_sdk()
 
     def stop(self):
         logger.debug("stop()")
-
-        with self._state_lock:
-            self._stopping = True
-            self._live_view_enabled = False
-            self._capture_in_progress = False
+        self.signal_stop()
 
         with self._sdk_lock:
             lib = self.lib
@@ -327,25 +358,21 @@ class FujifilmSdkAdapter:
                         f"macOS detected -> waiting {wait_before_detect:.1f}s "
                         f"before detect/open (attempt {detect_index}/{detect_attempts})"
                     )
-                    time.sleep(wait_before_detect)
+                    self._wait_interruptible(wait_before_detect)
 
                 try:
                     count = self.lib.detect_usb_cameras()
                 except Exception as exc:
                     last_error = exc
-                    logger.debug(
-                        f"detect attempt {detect_index} failed: {exc}"
-                    )
-                    time.sleep(1.0)
+                    logger.debug(f"detect attempt {detect_index} failed: {exc}")
+                    self._wait_interruptible(1.0)
                     continue
 
-                logger.debug(
-                    f"detect attempt {detect_index} -> count={count}"
-                )
+                logger.debug(f"detect attempt {detect_index} -> count={count}")
 
                 if count <= 0:
                     last_error = RuntimeError("No FUJIFILM camera detected by the SDK")
-                    time.sleep(1.0)
+                    self._wait_interruptible(1.0)
                     continue
 
                 for open_index in range(1, open_attempts_per_detect + 1):
@@ -355,7 +382,7 @@ class FujifilmSdkAdapter:
                             f"waiting {delay:.1f}s before XSDK_OpenEx "
                             f"(open attempt {open_index}/{open_attempts_per_detect})"
                         )
-                        time.sleep(delay)
+                        self._wait_interruptible(delay)
 
                         self.camera_handle, info = self.lib.open_first_camera()
 
@@ -370,15 +397,12 @@ class FujifilmSdkAdapter:
                         )
 
                         logger.debug("settling after open")
-                        time.sleep(1.0)
+                        self._wait_interruptible(1.0)
 
                         with self._state_lock:
-                            self._connected = True
-                            self._live_view_enabled = False
-                            self._capture_in_progress = False
-                            self._stopping = False
                             self._camera_opened_monotonic = time.monotonic()
                             self._camera_model = info.model
+                        self._set_state(WrapperState.IDLE, "camera opened")
 
                         descriptor = CameraDescriptor(
                             model=info.model,
@@ -400,18 +424,16 @@ class FujifilmSdkAdapter:
                                 logger.debug("cleaning up partial open session")
                                 self.lib.close_camera(self.camera_handle)
                         except Exception as cleanup_exc:
-                            logger.debug(
-                                f"cleanup partial open ignored: {cleanup_exc}"
-                            )
+                            logger.debug(f"cleanup partial open ignored: {cleanup_exc}")
                         finally:
                             self._clear_session_state()
 
-                        time.sleep(1.5)
+                        self._wait_interruptible(1.5)
 
                 logger.debug(
                     "detect succeeded but all open attempts failed; retrying full detect cycle"
                 )
-                time.sleep(1.5)
+                self._wait_interruptible(1.5)
 
         if last_error is not None:
             raise RuntimeError(f"Cannot open camera via SDK: {last_error}")
@@ -455,10 +477,10 @@ class FujifilmSdkAdapter:
         lib, handle = self.ensure_session()
 
         with self._state_lock:
-            if self._live_view_enabled:
+            if self._state == WrapperState.LIVE:
                 logger.debug("begin_live_view skipped: already enabled")
                 return
-            if self._capture_in_progress:
+            if self._state == WrapperState.CAPTURING:
                 raise RuntimeError("Cannot start live view during a capture")
             opened_at = self._camera_opened_monotonic
 
@@ -467,10 +489,8 @@ class FujifilmSdkAdapter:
                 elapsed = time.monotonic() - opened_at
                 if elapsed < 1.5:
                     wait_more = 1.5 - elapsed
-                    logger.debug(
-                        f"extra settle before live view: {wait_more:.2f}s"
-                    )
-                    time.sleep(wait_more)
+                    logger.debug(f"extra settle before live view: {wait_more:.2f}s")
+                    self._wait_interruptible(wait_more)
 
             last_error = None
 
@@ -478,16 +498,13 @@ class FujifilmSdkAdapter:
                 try:
                     logger.debug(f"begin_live_view() attempt {attempt}/3")
                     self.start_live_view_once(lib, handle)
-                    with self._state_lock:
-                        self._live_view_enabled = True
+                    self._set_state(WrapperState.LIVE, "live view enabled")
                     logger.debug("live view enabled")
                     return
 
                 except Exception as exc:
                     last_error = exc
-                    logger.debug(
-                        f"begin_live_view attempt {attempt} failed: {exc}"
-                    )
+                    logger.debug(f"begin_live_view attempt {attempt} failed: {exc}")
 
                     try:
                         logger.debug("soft reset after live view failure")
@@ -501,11 +518,9 @@ class FujifilmSdkAdapter:
                         try:
                             lib.set_priority_mode(handle, XSDK_PRIORITY_CAMERA)
                         except Exception as prio_exc:
-                            logger.debug(
-                                f"soft reset set CAMERA ignored: {prio_exc}"
-                            )
+                            logger.debug(f"soft reset set CAMERA ignored: {prio_exc}")
 
-                        time.sleep(0.8)
+                        self._wait_interruptible(0.8)
                     except Exception as reset_exc:
                         logger.debug(f"soft reset failed: {reset_exc}")
 
@@ -515,7 +530,7 @@ class FujifilmSdkAdapter:
         lib, handle = self.ensure_session()
 
         with self._state_lock:
-            if not self._live_view_enabled:
+            if self._state != WrapperState.LIVE:
                 logger.debug("end_live_view skipped: already disabled")
                 return
 
@@ -527,14 +542,13 @@ class FujifilmSdkAdapter:
             logger.debug("end_live_view()")
             lib.stop_live_view(handle)
 
-        with self._state_lock:
-            self._live_view_enabled = False
+        self._set_state(WrapperState.IDLE, "live view stopped")
 
     def get_live_view_frame(self):
         lib, handle = self.ensure_session()
 
         with self._state_lock:
-            if not self._live_view_enabled or self._capture_in_progress:
+            if self._state != WrapperState.LIVE:
                 return self._last_frame
 
         with self._sdk_lock:
@@ -562,14 +576,11 @@ class FujifilmSdkAdapter:
     # Capture
     # ------------------------------------------------------------------
 
-    def _do_capture(self, output_dir):
+    def _do_capture(self, output_dir, was_live):
         lib, handle = self.ensure_session()
 
         logger.debug(f"capture start output_dir={output_dir}")
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        with self._state_lock:
-            was_live = self._live_view_enabled
 
         with self._sdk_lock:
             if was_live:
@@ -577,20 +588,16 @@ class FujifilmSdkAdapter:
                     logger.debug("stopping live view before capture")
                     lib.stop_live_view(handle)
                 except Exception as exc:
-                    logger.debug(
-                        f"stop live before capture warning: {exc}"
-                    )
-                with self._state_lock:
-                    self._live_view_enabled = False
-                time.sleep(0.5)
+                    logger.debug(f"stop live before capture warning: {exc}")
+                self._wait_interruptible(0.5)
 
             logger.debug("switching to PC PRIORITY for capture")
             lib.set_priority_mode(handle, XSDK_PRIORITY_PC)
-            time.sleep(0.5)
+            self._wait_interruptible(0.5)
 
             logger.debug("releasing in PC PRIORITY")
             lib.release_pc(handle)
-            time.sleep(0.5)
+            self._wait_interruptible(0.5)
 
             deadline = time.monotonic() + 10.0
             captured_path = None
@@ -601,13 +608,11 @@ class FujifilmSdkAdapter:
                 size = int(info.data_size)
 
                 if fmt == XSDK_IMAGEFORMAT_NONE or size <= 0:
-                    time.sleep(0.05)
+                    self._wait_interruptible(0.05)
                     continue
 
                 raw = lib.read_image(handle, size)
-                logger.debug(
-                    f"capture buffer item fmt={fmt} size={len(raw)}"
-                )
+                logger.debug(f"capture buffer item fmt={fmt} size={len(raw)}")
 
                 if fmt in {
                     XSDK_IMAGEFORMAT_RAW,
@@ -624,30 +629,29 @@ class FujifilmSdkAdapter:
             if captured_path is None:
                 raise RuntimeError("Timeout waiting for captured image in SDK buffer")
 
-            if was_live and not self._stopping:
+            if was_live and not self.is_stopping():
                 try:
                     logger.debug("restarting live view after capture")
                     self.start_live_view_once(lib, handle)
-                    with self._state_lock:
-                        self._live_view_enabled = True
+                    self._set_state(WrapperState.LIVE, "live view restarted after capture")
                 except Exception as exc:
-                    logger.debug(
-                        f"restart live view after capture warning: {exc}"
-                    )
+                    logger.debug(f"restart live view after capture warning: {exc}")
 
             return captured_path
 
     def capture_photo(self, output_dir):
         with self._state_lock:
-            if self._capture_in_progress:
+            if self._state == WrapperState.CAPTURING:
                 raise RuntimeError("A capture is already in progress")
-            self._capture_in_progress = True
+            was_live = self._state == WrapperState.LIVE
+            self._set_state(WrapperState.CAPTURING, "capture started")
 
         try:
-            return self._do_capture(output_dir)
+            return self._do_capture(output_dir, was_live)
         finally:
             with self._state_lock:
-                self._capture_in_progress = False
+                if self._state == WrapperState.CAPTURING:
+                    self._set_state(WrapperState.IDLE, "capture finished")
 
     # ------------------------------------------------------------------
     # PASM
@@ -674,9 +678,7 @@ class FujifilmSdkAdapter:
 
         try:
             zoom_pos = lib.get_lens_zoom_pos(handle)
-            logger.debug(
-                f"current zoom pos from GetLensZoomPos={zoom_pos}"
-            )
+            logger.debug(f"current zoom pos from GetLensZoomPos={zoom_pos}")
             return int(zoom_pos)
         except Exception as exc:
             logger.debug(f"get_lens_zoom_pos failed: {exc}")
@@ -685,9 +687,7 @@ class FujifilmSdkAdapter:
             zoom_positions = lib.cap_lens_zoom_pos(handle)
             if zoom_positions:
                 zoom_pos = int(zoom_positions[0])
-                logger.debug(
-                    f"fallback zoom pos from CapLensZoomPos={zoom_pos}"
-                )
+                logger.debug(f"fallback zoom pos from CapLensZoomPos={zoom_pos}")
                 return zoom_pos
         except Exception as exc:
             logger.debug(f"cap_lens_zoom_pos failed: {exc}")
@@ -744,9 +744,7 @@ class FujifilmSdkAdapter:
 
         if iso_block:
             iso_values = [v for v in iso_values if v not in iso_block]
-            logger.debug(
-                f"model blocklist filtered ISO; remaining={len(iso_values)}"
-            )
+            logger.debug(f"model blocklist filtered ISO; remaining={len(iso_values)}")
         if shutter_block:
             shutter_values = [v for v in shutter_values if v not in shutter_block]
             logger.debug(
@@ -811,24 +809,24 @@ class FujifilmSdkAdapter:
 
         with self._sdk_lock:
             # 1) stop live view completely, pas seulement les timers Qt
-            was_live = self._live_view_enabled
+            with self._state_lock:
+                was_live = self._state == WrapperState.LIVE
+                if was_live:
+                    self._set_state(WrapperState.IDLE, "stop live before exposure")
             logger.debug(f"set_exposure live_view_before={was_live}")
 
             if was_live:
                 try:
                     logger.debug("stopping live view before exposure change")
                     lib.stop_live_view(handle)
-                    self._live_view_enabled = False
-                    time.sleep(0.3)
+                    self._wait_interruptible(0.3)
                 except Exception as exc:
-                    logger.debug(
-                        f"stop_live_view before set_exposure ignored: {exc}"
-                    )
+                    logger.debug(f"stop_live_view before set_exposure ignored: {exc}")
 
             # 2) pour X-T4: re-force PC priority juste avant les setters
             logger.debug("forcing PC priority before exposure change")
             lib.set_priority_mode(handle, XSDK_PRIORITY_PC)
-            time.sleep(0.2)
+            self._wait_interruptible(0.2)
 
             try:
                 current_ae_mode = lib.get_ae_mode(handle)
@@ -872,27 +870,19 @@ class FujifilmSdkAdapter:
             )
             if effective_mode == XSDK_AE_SHUTTER_PRIORITY:
                 if aperture is not None:
-                    logger.debug(
-                        f"dropping aperture={aperture} (auto in S mode)"
-                    )
+                    logger.debug(f"dropping aperture={aperture} (auto in S mode)")
                     aperture = None
             elif effective_mode == XSDK_AE_APERTURE_PRIORITY:
                 if shutter is not None:
-                    logger.debug(
-                        f"dropping shutter={shutter} (auto in A mode)"
-                    )
+                    logger.debug(f"dropping shutter={shutter} (auto in A mode)")
                     shutter = None
             elif effective_mode not in (XSDK_AE_MANUAL, None):
                 # P or any other auto mode: both shutter and aperture are auto
                 if shutter is not None:
-                    logger.debug(
-                        f"dropping shutter={shutter} (auto in P/auto mode)"
-                    )
+                    logger.debug(f"dropping shutter={shutter} (auto in P/auto mode)")
                     shutter = None
                 if aperture is not None:
-                    logger.debug(
-                        f"dropping aperture={aperture} (auto in P/auto mode)"
-                    )
+                    logger.debug(f"dropping aperture={aperture} (auto in P/auto mode)")
                     aperture = None
 
             if (
@@ -906,7 +896,7 @@ class FujifilmSdkAdapter:
                     f"-> {requested_ae_mode} ({self._format_ae_mode_label(requested_ae_mode)})"
                 )
                 lib.set_ae_mode(handle, requested_ae_mode)
-                time.sleep(0.3)
+                self._wait_interruptible(0.3)
 
                 try:
                     ae_mode_after = lib.get_ae_mode(handle)
@@ -915,9 +905,7 @@ class FujifilmSdkAdapter:
                         f"{ae_mode_after} ({self._format_ae_mode_label(ae_mode_after)})"
                     )
                 except Exception as exc:
-                    logger.debug(
-                        f"get_ae_mode after change failed: {exc}"
-                    )
+                    logger.debug(f"get_ae_mode after change failed: {exc}")
             elif (
                 requested_ae_mode is not None
                 and requested_ae_mode not in supported_ae_modes
@@ -932,13 +920,9 @@ class FujifilmSdkAdapter:
 
             try:
                 exposure_state_before = self.get_exposure_state()
-                logger.debug(
-                    f"exposure_state_before_set={exposure_state_before}"
-                )
+                logger.debug(f"exposure_state_before_set={exposure_state_before}")
             except Exception as exc:
-                logger.debug(
-                    f"get_exposure_state before set failed: {exc}"
-                )
+                logger.debug(f"get_exposure_state before set failed: {exc}")
 
             # 3) applique seulement les réglages réellement supportés
             supported_iso = set(lib.cap_sensitivity(handle))
@@ -956,12 +940,8 @@ class FujifilmSdkAdapter:
                 f"zoom_pos={zoom_pos}"
             )
             logger.debug(f"supported ISO values={sorted(supported_iso)}")
-            logger.debug(
-                f"supported shutter values={sorted(supported_shutter)}"
-            )
-            logger.debug(
-                f"supported aperture values={sorted(supported_aperture)}"
-            )
+            logger.debug(f"supported shutter values={sorted(supported_shutter)}")
+            logger.debug(f"supported aperture values={sorted(supported_aperture)}")
 
             with self._state_lock:
                 model = self._camera_model
@@ -971,22 +951,16 @@ class FujifilmSdkAdapter:
 
             if iso is not None:
                 if iso in iso_block:
-                    logger.debug(
-                        f"ISO={iso} blocked for model={model}, skipping"
-                    )
+                    logger.debug(f"ISO={iso} blocked for model={model}, skipping")
                 elif iso in supported_iso:
                     logger.debug(f"applying ISO={iso}")
                     try:
                         lib.set_sensitivity(handle, iso)
-                        time.sleep(0.15)
+                        self._wait_interruptible(0.15)
                     except Exception as exc:
-                        logger.debug(
-                            f"set_sensitivity({iso}) failed: {exc}"
-                        )
+                        logger.debug(f"set_sensitivity({iso}) failed: {exc}")
                 else:
-                    logger.debug(
-                        f"requested ISO={iso} not supported in current state"
-                    )
+                    logger.debug(f"requested ISO={iso} not supported in current state")
 
             if shutter is not None:
                 if shutter in shutter_block:
@@ -997,11 +971,9 @@ class FujifilmSdkAdapter:
                     logger.debug(f"applying shutter={shutter}")
                     try:
                         lib.set_shutter_speed(handle, shutter)
-                        time.sleep(0.15)
+                        self._wait_interruptible(0.15)
                     except Exception as exc:
-                        logger.debug(
-                            f"set_shutter_speed({shutter}) failed: {exc}"
-                        )
+                        logger.debug(f"set_shutter_speed({shutter}) failed: {exc}")
                 else:
                     logger.debug(
                         f"requested shutter={shutter} "
@@ -1017,11 +989,9 @@ class FujifilmSdkAdapter:
                     logger.debug(f"applying aperture={aperture}")
                     try:
                         lib.set_aperture(handle, aperture)
-                        time.sleep(0.15)
+                        self._wait_interruptible(0.15)
                     except Exception as exc:
-                        logger.debug(
-                            f"set_aperture({aperture}) failed: {exc}"
-                        )
+                        logger.debug(f"set_aperture({aperture}) failed: {exc}")
                 else:
                     logger.debug(
                         f"requested aperture={aperture} "
@@ -1030,19 +1000,14 @@ class FujifilmSdkAdapter:
 
             try:
                 exposure_state_after = self.get_exposure_state()
-                logger.debug(
-                    f"exposure_state_after_set={exposure_state_after}"
-                )
+                logger.debug(f"exposure_state_after_set={exposure_state_after}")
             except Exception as exc:
-                logger.debug(
-                    f"get_exposure_state after set failed: {exc}"
-                )
+                logger.debug(f"get_exposure_state after set failed: {exc}")
 
             # 4) redémarre le live view après
             if was_live:
-                time.sleep(0.3)
+                self._wait_interruptible(0.3)
                 logger.debug("restarting live view after exposure change")
                 lib.start_live_view(handle)
-                self._live_view_enabled = True
+                self._set_state(WrapperState.LIVE, "live view restored after exposure change")
                 logger.debug("live view restored after exposure change")
-

@@ -263,26 +263,22 @@ class ThumbnailButton(QPushButton):
     _BORDER_NORMAL = "border: 2px solid #444444; border-radius: 12px; background: transparent;"
     _BORDER_SELECTED = "border: 3px solid #dc2626; border-radius: 12px; background: transparent;"
 
-    def __init__(self, photo_path, width, height):
+    def __init__(self, photo_path, thumbnail_path, width, height):
         super().__init__()
         self.photo_path = photo_path
+        self.thumbnail_path = thumbnail_path
         self.setFixedSize(width, height)
         self.setCursor(Qt.PointingHandCursor)
+        self.setIconSize(self.size())
         self.setStyleSheet("""
             QPushButton { border: none; border-radius: 12px; background: #151515; padding: 0px; }
         """)
 
-        pixmap = QPixmap(str(photo_path))
+        pixmap = QPixmap(str(thumbnail_path))
         if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                self.size(),
-                Qt.KeepAspectRatioByExpanding,
-                Qt.SmoothTransformation,
-            )
-            self.setIcon(QIcon(scaled))
+            self.setIcon(QIcon(pixmap))
             self.setIconSize(self.size())
 
-        # Overlay drawn on top of the icon — the only place borders are visible
         self._border = QFrame(self)
         self._border.setGeometry(0, 0, width, height)
         self._border.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -304,6 +300,7 @@ class GalleryWidget(QWidget):
         self.thumb_w = thumb_w
         self.thumb_h = thumb_h
         self._thumbs = []
+        self._photo_keys = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -333,17 +330,27 @@ class GalleryWidget(QWidget):
                 widget.deleteLater()
         self.layout.addStretch(1)
 
-    def set_photos(self, photos):
+    def set_photos(self, records):
+        photo_keys = [str(record["photo_path"]) for record in records]
+        if photo_keys == self._photo_keys:
+            return
+
+        self._photo_keys = photo_keys
         self._reset_layout()
-        if not photos:
+        if not records:
             return
 
         last_item = self.layout.takeAt(self.layout.count() - 1)
         if last_item is not None:
             del last_item
 
-        for photo in photos:
-            thumb = ThumbnailButton(photo, self.thumb_w, self.thumb_h)
+        for record in records:
+            thumb = ThumbnailButton(
+                record["photo_path"],
+                record["thumbnail_path"],
+                self.thumb_w,
+                self.thumb_h,
+            )
             thumb.photo_clicked.connect(self.photo_selected)
             self.layout.addWidget(thumb)
             self._thumbs.append(thumb)

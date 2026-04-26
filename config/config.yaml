@@ -1,9 +1,8 @@
 app:
   window_title: FujiBooth
   fullscreen: false
-  countdown_seconds: 5
-  freeze_seconds: 10
-  print_button_seconds: 5
+  countdown_seconds: 3
+  freeze_seconds: 8
 
 camera:
   usb:
@@ -19,6 +18,7 @@ camera:
 storage:
   captures_dir: "./runtime/captures"
   output_dir: "./runtime/output"
+  thumbnails_dir: "./runtime/thumbnails"
   accepted_extensions: [".jpg", ".jpeg", ".png", ".raf", ".heic"]
   filename_pattern: "%Y%m%d_%H%M%S"
   frame_path: "./config/frame.png"

@@ -16,7 +16,8 @@ LOGGING_CONFIG = {
     "formatters": {
         "console": {
             "()": "fujibooth.logging_config.ShortNameFormatter",
-            "fmt": "%(levelname)-8s  %(short_name)-40s  %(message)s",
+            "fmt": "%(asctime)s.%(msecs)03d %(levelname)-8s %(short_name)-40s %(message)s",
+            "datefmt": "%H:%M:%S",
         }
     },
     "handlers": {

@@ -14,7 +14,6 @@ class AppConfig:
     fullscreen: bool = True
     countdown_seconds: int = 5
     freeze_seconds: int = 10
-    print_button_seconds: int = 5
 
 
 @dataclass(slots=True)
@@ -42,6 +41,7 @@ class CameraConfig:
 class StorageConfig:
     captures_dir: str = "./runtime/captures"   # originals from SDK
     output_dir: str = "./runtime/output"       # framed photos
+    thumbnails_dir: str = "./runtime/thumbnails"
     accepted_extensions: list[str] = field(
         default_factory=lambda: [".jpg", ".jpeg", ".png", ".raf", ".heic"]
     )
@@ -114,6 +114,10 @@ class Settings:
         return Path(os.path.expanduser(self.storage.output_dir)).resolve()
 
     @property
+    def thumbnails_path(self):
+        return Path(os.path.expanduser(self.storage.thumbnails_dir)).resolve()
+
+    @property
     def frame_path(self):
         if not self.storage.frame_path:
             return None
@@ -156,6 +160,7 @@ def build_settings(payload, config_path=None):
     )
     settings.captures_path.mkdir(parents=True, exist_ok=True)
     settings.output_path.mkdir(parents=True, exist_ok=True)
+    settings.thumbnails_path.mkdir(parents=True, exist_ok=True)
     return settings
 
 
@@ -176,9 +181,11 @@ def load_settings(config_path=None):
             logger.info("loaded: %s", candidate)
             logger.info("captures_dir: %s", settings.captures_path)
             logger.info("output_dir: %s", settings.output_path)
+            logger.info("thumbnails_dir: %s", settings.thumbnails_path)
             return settings
     settings = build_settings({}, config_path=None)
     logger.info("no config file found, using defaults")
     logger.info("captures_dir: %s", settings.captures_path)
     logger.info("output_dir: %s", settings.output_path)
+    logger.info("thumbnails_dir: %s", settings.thumbnails_path)
     return settings

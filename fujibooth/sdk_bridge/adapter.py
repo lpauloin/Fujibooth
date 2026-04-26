@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 
 
+class AdapterStopping(BaseException):
+    pass
+
+
 @dataclass(slots=True)
 class CameraDescriptor:
     model: str

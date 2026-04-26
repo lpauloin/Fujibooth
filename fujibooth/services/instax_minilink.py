@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from enum import Enum
 import logging
 from math import ceil
-from pathlib import Path
 from struct import pack, unpack_from
 from time import sleep, monotonic
 from io import BytesIO
@@ -91,7 +90,8 @@ class InstaxMiniLinkClient:
 
         logger.debug(
             "connecting to %s [%s]",
-            self.peripheral.identifier(), self.peripheral.address(),
+            self.peripheral.identifier(),
+            self.peripheral.address(),
         )
         self.peripheral.connect()
         if not self.peripheral.is_connected():
@@ -159,7 +159,8 @@ class InstaxMiniLinkClient:
                     return peripheral
                 logger.debug(
                     "found Instax printer but it is not connectable: %s [%s]",
-                    name, address,
+                    name,
+                    address,
                 )
 
             if deadline is not None and monotonic() >= deadline:
@@ -353,4 +354,3 @@ class InstaxMiniLinkClient:
         buffer.truncate(0)
         image.save(buffer, format="JPEG", quality=closest_quality, optimize=True)
         return bytearray(buffer.getvalue())
-

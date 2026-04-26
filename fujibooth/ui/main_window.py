@@ -102,7 +102,10 @@ class MainWindow(QMainWindow):
             extensions=settings.storage.accepted_extensions,
             filename_pattern=settings.storage.filename_pattern,
             frame_path=settings.frame_path,
+            thumbnails_dir=settings.thumbnails_path,
+            thumbnail_size=(settings.ui.thumbnail_width, settings.ui.thumbnail_height),
         )
+        self.repository.ensure_all_thumbnails()
         self.print_service = PrintService(
             enabled=settings.printing.enabled,
             mode=settings.printing.mode,
@@ -165,8 +168,6 @@ class MainWindow(QMainWindow):
         self.countdown_timer.setInterval(1000)
         self.countdown_timer.timeout.connect(self._countdown_tick)
 
-        self.print_button_timer = QTimer(self)
-        self.print_button_timer.setSingleShot(True)
 
         self.return_timer = QTimer(self)
         self.return_timer.setSingleShot(True)
@@ -180,12 +181,7 @@ class MainWindow(QMainWindow):
         self.gallery.set_remote_selection(0)
         self._set_exposure_controls_enabled(False)
         self._apply_idle_ui()
-        photos = self.repository.recent(limit=1)
-        if photos:
-            self.on_photo_selected(str(photos[0]))
-            self.return_timer.stop()
-            self.print_button_timer.stop()
-            self.print_button.hide()
+        self._sync_print_button_visibility()
         self._debug_dump_ui_state("after __init__")
 
     def _debug_dump_ui_state(self, origin):
@@ -263,8 +259,6 @@ class MainWindow(QMainWindow):
 
         self.exposure_bar.changed.connect(self.on_exposure_changed)
         self.exposure_bar.frame_toggled.connect(self.live_view.set_frame_visible)
-        self.print_button_timer.timeout.disconnect()
-        self.print_button_timer.timeout.connect(self.print_button.hide)
 
         self.backend.live_view_updated.connect(self.on_live_view_updated)
         self.backend.photo_captured.connect(self.on_photo_captured)
@@ -290,6 +284,16 @@ class MainWindow(QMainWindow):
         self.state = state
         live_states = {BoothState.LIVE_VIEW}
         self.exposure_bar.setVisible(state in live_states)
+        self._sync_print_button_visibility()
+
+        if state is BoothState.FREEZE:
+            self._apply_freeze_ui()
+
+    def _sync_print_button_visibility(self):
+        visible = self.state is BoothState.PHOTO_SELECTED and self.selected_photo is not None
+        self.print_button.setVisible(visible)
+        if visible:
+            self.print_button.raise_()
 
     def _show_gallery(self, visible):
         logger.debug("_show_gallery visible=%s", visible)
@@ -397,7 +401,7 @@ class MainWindow(QMainWindow):
     def _apply_idle_ui(self):
         logger.debug("_apply_idle_ui()")
         self._show_gallery(True)
-        self.print_button.hide()
+        self._sync_print_button_visibility()
         self.live_view.hide_overlay()
         self.live_view.set_freeze_frame(False)
         self._show_camera_badge(True)
@@ -405,9 +409,23 @@ class MainWindow(QMainWindow):
     def _apply_busy_ui(self):
         logger.debug("_apply_busy_ui()")
         self._show_gallery(False)
-        self.print_button.hide()
+        self._sync_print_button_visibility()
         self.live_view.set_freeze_frame(False)
         self._show_camera_badge(False)
+
+    def _apply_freeze_ui(self):
+        logger.debug("_apply_freeze_ui()")
+        self._show_gallery(False)
+        self._sync_print_button_visibility()
+        self.live_view.hide_overlay()
+        self.live_view.set_freeze_frame(True)
+        self._show_camera_badge(False)
+
+        if self.current_freeze_pixmap.isNull():
+            logger.warning("_apply_freeze_ui called without a freeze pixmap")
+            return
+
+        self.live_view.set_pixmap(self.current_freeze_pixmap, apply_frame=False)
 
     def _apply_photo_selected_ui(self):
         logger.debug("_apply_photo_selected_ui()")
@@ -452,7 +470,6 @@ class MainWindow(QMainWindow):
         logger.info("stop_services()")
         self.countdown_timer.stop()
         self.freeze_timer.stop()
-        self.print_button_timer.stop()
         self.return_timer.stop()
         self.remote.stop()
         if self._printer_monitor_started:
@@ -587,8 +604,7 @@ class MainWindow(QMainWindow):
                 if self._remote_gallery_index < len(photos):
                     self.on_photo_selected(str(photos[self._remote_gallery_index]))
                     self.return_timer.stop()
-                    self.print_button_timer.stop()
-                    self.print_button.hide()
+                    self._sync_print_button_visibility()
         else:
             self.gallery.set_remote_selection(-1)
             self.exposure_bar.set_focused_control(self._remote_control_index)
@@ -606,8 +622,7 @@ class MainWindow(QMainWindow):
             )
         self.on_photo_selected(str(photos[self._remote_gallery_index]))
         self.return_timer.stop()
-        self.print_button_timer.stop()
-        self.print_button.hide()
+        self._sync_print_button_visibility()
 
     def _remote_control_navigate(self, delta):
         combos = [
@@ -698,8 +713,7 @@ class MainWindow(QMainWindow):
         self._reset_remote_state()
         self._set_state(BoothState.COUNTDOWN)
         self.selected_photo = None
-        self.print_button.hide()
-        self.print_button_timer.stop()
+        self._sync_print_button_visibility()
         self.freeze_timer.stop()
         self.return_timer.stop()
         self._apply_busy_ui()
@@ -925,12 +939,9 @@ class MainWindow(QMainWindow):
         self.current_freeze_pixmap = freeze_pixmap
         self.selected_photo = display_path
         self._set_state(BoothState.FREEZE)
-        self._apply_busy_ui()
-
-        self.live_view.hide_overlay()
-        self.live_view.set_pixmap(freeze_pixmap)
         self.message_label.setText("")
 
+        self.repository.ensure_thumbnail(display_path)
         self.refresh_gallery()
         self.freeze_timer.start(FREEZE_SECONDS * 1000)
         self._debug_dump_ui_state("after on_photo_captured")
@@ -940,13 +951,13 @@ class MainWindow(QMainWindow):
         logger.info("_return_to_live_view()")
         self.freeze_timer.stop()
         self.return_timer.stop()
-        self.print_button_timer.stop()
-        self.print_button.hide()
+        self._sync_print_button_visibility()
         self._reset_remote_state()
         self._remote_gallery_index = 0
         self.gallery.set_remote_selection(0)
 
         if self._camera_connected:
+            self.current_freeze_pixmap = QPixmap()
             self._set_state(BoothState.LIVE_VIEW)
             self._apply_idle_ui()
             self.live_view.hide_overlay()
@@ -991,9 +1002,7 @@ class MainWindow(QMainWindow):
         self._set_state(BoothState.PHOTO_SELECTED)
         self._apply_photo_selected_ui()
         self.message_label.setText(self.selected_photo.name)
-        self.print_button.show()
-        self.print_button.raise_()
-        self.print_button_timer.start(self.settings.app.print_button_seconds * 1000)
+        self._sync_print_button_visibility()
         self.return_timer.start(RETURN_TO_LIVEVIEW_SECONDS * 1000)
         self._debug_dump_ui_state("after on_photo_selected")
 
@@ -1026,16 +1035,12 @@ class MainWindow(QMainWindow):
             logger.debug("on_backend_state_changed ignored: not BackendState")
             return
 
-        if (
-            self.state
-            in {
-                BoothState.COUNTDOWN,
-                BoothState.FREEZE,
-                BoothState.PHOTO_SELECTED,
-                BoothState.PRINTING,
-            }
-            and state is not BackendState.WAITING_FOR_CAMERA
-        ):
+        if self.state in {
+            BoothState.COUNTDOWN,
+            BoothState.FREEZE,
+            BoothState.PHOTO_SELECTED,
+            BoothState.PRINTING,
+        }:
             logger.debug("on_backend_state_changed ignored: strong local UI state")
             return
 
@@ -1064,6 +1069,9 @@ class MainWindow(QMainWindow):
             self.message_label.setText("Updating camera settings...")
 
         elif state is BackendState.WAITING_FOR_CAMERA:
+            if self.state is BoothState.ERROR:
+                logger.debug("on_backend_state_changed ignored: keep explicit error visible")
+                return
             self._set_state(BoothState.WAITING_FOR_CAMERA)
             self._apply_idle_ui()
             self.message_label.setText("Waiting for FUJIFILM camera")
@@ -1077,6 +1085,10 @@ class MainWindow(QMainWindow):
             self._set_state(BoothState.DOWNLOADING)
             self._apply_busy_ui()
             self.message_label.setText("Downloading photo...")
+
+        elif state is BackendState.ERROR:
+            self._set_state(BoothState.ERROR)
+            self._apply_idle_ui()
 
         self._debug_dump_ui_state("after on_backend_state_changed")
 
@@ -1144,6 +1156,6 @@ class MainWindow(QMainWindow):
         self._refresh_remote_badge()
 
     def refresh_gallery(self):
-        photos = self.repository.recent(limit=50)
-        logger.info("refresh_gallery photos=%s", len(photos))
-        self.gallery.set_photos(photos)
+        records = self.repository.recent_thumbnails(limit=50)
+        logger.info("refresh_gallery thumbnails=%s", len(records))
+        self.gallery.set_photos(records)

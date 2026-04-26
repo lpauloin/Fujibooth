@@ -26,10 +26,19 @@ class BackendState(Enum):
 
 class SessionState(Enum):
     STOPPED = auto()
-    WAITING_USB = auto()
+    STOPPING = auto()
+    WAITING_CAMERA = auto()
     CONNECTING = auto()
     READY = auto()
     LIVE = auto()
     QUERYING = auto()
     CAPTURING = auto()
     ERROR = auto()
+
+
+class WrapperState(Enum):
+    DISCONNECTED = auto()
+    IDLE = auto()
+    LIVE = auto()
+    CAPTURING = auto()
+    STOPPING = auto()
