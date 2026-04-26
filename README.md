@@ -1,61 +1,61 @@
 # Fujibooth
 
-> A macOS photobooth application built for **FUJIFILM cameras** — live view, countdown, capture, gallery, and remote
-> control, all in one focused package.
+macOS photobooth for **FUJIFILM** cameras — live view, countdown, capture, gallery, Instax wireless printing, and BLE remote control in one application.
 
 ---
 
 ## Features
 
-### Camera
+**Camera**
 
-- **Live view** streamed directly from the camera via the Fujifilm SDK
-- **Remote capture** triggered through the SDK (no shutter button needed)
-- **USB presence monitoring** — detects camera plug/unplug in real time
-- **Exposure controls** — adjust ISO, shutter speed, aperture, and AE mode from the UI
+- Live view streamed continuously via the Fujifilm SDK
+- Remote shutter via the SDK (no need to touch the camera)
+- USB monitoring — detects plug/unplug in real time
+- Exposure controls: AE mode, ISO, shutter speed, aperture from the UI
 
-### Photobooth workflow
+**Photobooth workflow**
 
-- **Countdown** before each capture (configurable duration)
-- **Full-screen freeze preview** after capture
-- **Photo frame overlay** composited onto every captured image
-- **Gallery** of recent shots at the bottom of the screen, scrollable
+- Configurable countdown before each capture
+- Full-screen freeze preview after capture
+- PNG frame overlay composited onto every captured photo
+- Scrollable gallery of the 50 most recent shots at the bottom of the screen
 
-### Remote control
+**Printing**
 
-- **Beauty-R1 BLE remote** supported as a HID device (read via `hidapi`)
-- Raw HID report decoding for button mapping discovery
+- Instax Mini Link wireless printing via BLE (`simplepyble`) — auto-connect, print queue, busy/cooldown handling
+- Shell command fallback for any other printer
+- Image pipeline: auto-rotate landscape, cover crop or letterbox (contain), autocontrast, color/contrast/brightness/sharpness boosts
+- Passive BLE monitor — scans Bluetooth advertisements to track printer presence without connecting
+- Modes: `instax_ble`, `command`, `stub`, `auto`
+
+**Beauty-R1 remote**
+
+- BLE HID pairing (hidapi) — raw HID report reading
+- Gallery navigation and exposure control from the remote
 - Qt keyboard fallback when HID capture is not active
-- Bluetooth connection badge in the UI
 
-### Printing
+**UI**
 
-- Optional print workflow — shows a **PRINT button** after each capture
-- Calls any external print command configured in `config.yaml`
-
-### UI
-
-- Dark full-screen UI (designed for kiosk use)
-- Camera connection badge with connected/disconnected color state
-- Remote connection badge
-- Tap-to-shoot on the live view
+- Dark full-screen interface (kiosk mode)
+- Connection badges: camera, remote, printer
+- Click on the live view to start the countdown
+- PRINT button visible after each capture or gallery selection
 
 ---
 
 ## Requirements
 
-| Requirement      | Details                                |
-|------------------|----------------------------------------|
-| macOS            | 12 Monterey or later                   |
-| Python           | 3.11+                                  |
-| FUJIFILM camera  | Connected via USB                      |
-| Fujifilm SDK     | Files placed in `./sdk/`               |
-| hidapi           | Native library (`brew install hidapi`) |
-| Beauty-R1 remote | Paired via Bluetooth (optional)        |
+| Requirement       | Details                                    |
+|-------------------|--------------------------------------------|
+| macOS             | 12 Monterey or later                       |
+| Python            | 3.11+                                      |
+| FUJIFILM camera   | Connected via USB                          |
+| Fujifilm SDK      | Files placed in `./sdk/`                   |
+| hidapi            | Native library (`brew install hidapi`)     |
+| Beauty-R1 remote  | Paired via Bluetooth (optional)            |
+| Instax Mini Link  | Paired via Bluetooth (optional)            |
 
-### Fujifilm SDK layout
-
-Place the SDK files in the `sdk/` directory at the project root:
+### SDK layout
 
 ```
 sdk/
@@ -71,37 +71,18 @@ sdk/
 
 ## Installation
 
-### 1. Install system dependencies
-
 ```bash
 brew install hidapi
-```
 
-> Required for the Python `hid` library to communicate with the Beauty-R1 remote.
-
-### 2. Clone and set up the virtual environment
-
-```bash
 git clone <repo-url>
 cd fujibooth
 
 python -m venv venv
 source venv/bin/activate
-```
-
-### 3. Install Python dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 4. Place the Fujifilm SDK
-
-Copy your SDK files into `./sdk/` (see layout above).
-
-### 5. Configure the app
-
-Edit `config/config.yaml` (see [Configuration](#configuration) below).
+Copy the SDK files into `./sdk/`, then edit `config/config.yaml`.
 
 ---
 
@@ -112,47 +93,73 @@ source venv/bin/activate
 python -m fujibooth.app
 ```
 
-Press `Esc` to quit. Click the live view (or press the remote button) to start the countdown.
+`Esc` to quit. Click the live view (or press the remote button) to start the countdown.
+
+Config file is looked up in this order:
+
+1. `./config.yaml`
+2. `./config/config.yaml`
+3. `~/.config/fujibooth/config.yaml`
 
 ---
 
 ## Configuration
 
-All settings live in `config/config.yaml`. The file is loaded automatically at startup.
-
 ```yaml
 app:
   window_title: FujiBooth
-  fullscreen: false          # set true for kiosk mode
+  fullscreen: true               # false for windowed mode
   countdown_seconds: 5
-  freeze_seconds: 10         # how long the captured photo stays on screen
-  print_button_seconds: 5    # how long the PRINT button is visible
+  freeze_seconds: 10             # how long the captured photo stays on screen
 
 camera:
   usb:
     enabled: true
-    vendor_id: "04cb"        # FUJIFILM USB vendor ID
+    vendor_id: "04cb"            # FUJIFILM USB vendor ID
     product_ids: [ "02e6" ]
     camera_name_contains: "FUJIFILM"
   sdk:
     sdk_root: ./sdk
-    library_path: ""         # leave empty to auto-detect
-    capture_dir: ./runtime/sdk_captures
+    library_path: ""             # leave empty to auto-detect
     live_view_interval_ms: 120
 
 storage:
-  output_dir: ./runtime/output
+  captures_dir: ./runtime/captures     # raw files from the SDK
+  output_dir: ./runtime/output         # final photos (frame applied)
+  thumbnails_dir: ./runtime/thumbnails
   accepted_extensions: [ ".jpg", ".jpeg", ".png", ".raf", ".heic" ]
   filename_pattern: "%Y%m%d_%H%M%S"
-  frame_path: ./config/frame.png   # PNG overlay composited onto every photo
+  frame_path: ./config/frame.png       # PNG overlay composited onto every photo (empty = disabled)
 
 printing:
-  enabled: false
-  command: ""                # e.g. "lp -d MyPrinter {path}"
+  enabled: true
+  mode: "instax_ble"             # instax_ble | command | stub | auto
+  command: ""                    # e.g. "lp -d MyPrinter {path}" (command mode)
+  device_name: ""                # BLE filter by name, e.g. "INSTAX-12345678"
+  device_address: ""             # BLE filter by MAC address
+  wait_after_print_seconds: 60   # cooldown before accepting a new print job
+  max_queue_size: 3
+  # Image processing
+  auto_rotate_landscape: true
+  image_fit: "cover"             # cover = crop to fill frame, contain = letterbox
+  autocontrast: true
+  color_boost: 1.25
+  contrast_boost: 1.15
+  brightness_boost: 1.05
+  sharpness_boost: 1.05
+  # BLE printer monitor
+  monitor_enabled: true
+  scan_interval_ms: 15000
+  scan_duration_ms: 1500
+  lost_after_misses: 3
+  initial_grace_ms: 10000        # startup grace period
+  cooldown_after_busy_ms: 30000  # pause after a busy detection
 
 remote:
   enabled: true
   hid_device_name: "Beauty-R1"   # Bluetooth name shown in macOS
+  hid_vendor_id: 0x0E05           # Beauty-R1 VID — run the app once to see [HID-ENUM]
+  hid_product_id: 0x0A00          # Beauty-R1 PID
 
 ui:
   background_color: "#111111"
@@ -165,83 +172,104 @@ ui:
 
 ---
 
-## Mapping the Beauty-R1 Remote
+## Beauty-R1 remote
 
-The remote pairs as a BLE HID device. When active, raw HID reports are printed to the console:
+The remote pairs as a BLE HID device. Raw HID reports are printed to the console on startup:
 
 ```
-[HID] report id=3 data=01        bits=00000001
+[HID] report id=3 data=01   bits=00000001
 [HID] -> CAMERA
-[HID] report id=4 data=00 01     bits=00000000 00000001
 ```
 
-To map a new button, press it and note the `report id` and `data` values, then add an entry to `BEAUTY_R1_REPORT_MAP` in
-`fujibooth/services/remote_control.py`:
+To map a button, note the `report id` and `data` values, then add an entry to `BEAUTY_R1_REPORT_MAP` in `fujibooth/services/remote_control.py`:
 
 ```python
-BEAUTY_R1_REPORT_MAP: dict[tuple, RemoteButton] = {
-    (3, 0, 0x01): RemoteButton.CAMERA,  # Volume+ button
-    (3, 0, 0x02): RemoteButton.PHOTO,  # Volume- button
-    # (4, 0, 0x01): RemoteButton.CENTER, # mouse button 1
-    # (5, "word", 0x00E9): RemoteButton.CAMERA,
+BEAUTY_R1_REPORT_MAP = {
+    (3, 0, 0x01): RemoteButton.CAMERA,  # Volume+
+    (3, 0, 0x02): RemoteButton.PHOTO,   # Volume-
 }
 ```
 
-**Note:** The `hid` library does not seize the device exclusively, so macOS will also see the remote's events (the
-cursor may move when directional buttons are pressed). To suppress OS events entirely, the IOHIDManager seize approach
-is needed instead.
+**Keyboard fallback** (when HID capture is not active):
+
+| Key             | Action                              |
+|-----------------|-------------------------------------|
+| Volume Down     | Capture                             |
+| ↑ / ↓           | Switch focus (gallery ↔ controls)   |
+| ← / →           | Navigate gallery or controls        |
+| Enter / Space   | Confirm a setting                   |
+
+**Note:** `hidapi` does not seize the device exclusively — macOS will also process the remote's events (cursor may move when directional buttons are pressed). The IOHIDManager seize approach is needed to suppress OS events entirely.
 
 ---
 
-## Photo Frame Overlay
+## Photo frame overlay
 
-Place a PNG at the path configured in `storage.frame_path` (default: `config/frame.png`). It will be composited on top
-of every captured photo before saving.
+Place a PNG at the path set in `storage.frame_path` (default: `config/frame.png`). It is composited on top of every captured photo before saving. Leave `frame_path` empty to disable.
 
-The frame must match the output resolution or be designed to scale gracefully.
+The PNG should match the output resolution or be designed to scale gracefully.
 
 ---
 
-## Runtime Directory Layout
+## Runtime directories
 
-The app creates these directories automatically:
+Created automatically on startup:
 
 ```
 runtime/
-├── output/          # final photos (with frame overlay)
-└── sdk_captures/    # temporary SDK capture working directory
+├── captures/     # raw SDK output (temporary)
+├── output/       # final photos with frame overlay
+└── thumbnails/   # gallery thumbnails
 ```
 
 ---
 
-## How It Works
+## Architecture
 
 ```
-Camera (USB)
-    │
-    ▼
-Fujifilm SDK ──► FujifilmSdkBackend
-    │                    │
-    │              live_view_updated
-    │              photo_captured
-    │              state_changed
-    ▼                    │
- MainWindow ◄────────────┘
-    │
-    ├── LiveViewWidget    (stream + overlay)
-    ├── ExposureBarWidget (ISO / shutter / aperture / AE mode)
-    ├── GalleryWidget     (recent photos, scrollable)
-    └── PrintService      (optional external print command)
+FUJIFILM camera (USB)
+        │
+        ▼
+  Fujifilm SDK
+        │
+        ▼
+FujifilmSdkAdapter          low-level ctypes wrapper
+        │
+        ▼
+FujifilmSdkBackend          worker thread + state machine
+        │  live_view_updated
+        │  photo_captured
+        │  state_changed
+        │  camera_connected / camera_disconnected
+        ▼
+   MainWindow
+        ├── LiveViewWidget        video stream + frame overlay + countdown overlay
+        ├── ExposureBarWidget     AE mode, ISO, shutter, aperture
+        ├── GalleryWidget         50 most recent shots, scrollable
+        └── PrintService          queue, Instax BLE or shell command
+                │
+                └── InstaxMiniLinkClient   minimal BLE client (simplepyble)
 
-Beauty-R1 (Bluetooth HID)
-    │
-    ▼
-HidDeviceCapture (hid library, polling thread)
-    │
-    ▼
-RemoteControlService ──► button_pressed signal ──► MainWindow
+USBMonitor              USB plug/unplug monitoring (PyUSB)
+        │  connected / disconnected
+        ▼
+   MainWindow → FujifilmSdkBackend
+
+BluetoothPrinterMonitor passive BLE advertisement scan (simplepyble)
+        │  connected / disconnected
+        ▼
+   MainWindow (printer badge)
+
+Beauty-R1 (BLE HID)
+        │
+        ▼
+RemoteControlService    HID report reading + button state machine
+        │  button_pressed
+        ▼
+   MainWindow
 ```
 
+---
 
 ## License
 
