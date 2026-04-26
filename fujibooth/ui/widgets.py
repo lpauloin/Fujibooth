@@ -76,6 +76,10 @@ class LiveViewWidget(QFrame):
         self.remote_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.remote_badge.hide()
 
+        self.printer_badge = QLabel(self.image_label)
+        self.printer_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.printer_badge.hide()
+
         self._frame_pixmap = QPixmap()
         self._show_frame = False
         self._apply_frame_to_display = False
@@ -109,7 +113,11 @@ class LiveViewWidget(QFrame):
         self._apply_frame_style()
 
     def _update_status_badge_position(self):
-        visible = [b for b in (self.status_badge, self.remote_badge) if not b.isHidden()]
+        visible = [
+            b
+            for b in (self.status_badge, self.remote_badge, self.printer_badge)
+            if not b.isHidden()
+        ]
         for badge in visible:
             badge.adjustSize()
         max_w = max((b.width() for b in visible), default=0)
@@ -244,6 +252,26 @@ class LiveViewWidget(QFrame):
     def clear_remote_status(self):
         self.remote_badge.clear()
         self.remote_badge.hide()
+        self._update_status_badge_position()
+
+    def set_printer_status(self, text, color):
+        self.printer_badge.setText((text or "").strip())
+        self.printer_badge.setStyleSheet(f"""
+            QLabel {{
+                background: {color};
+                color: white;
+                padding: 8px 14px;
+                border-radius: 12px;
+                font-size: 16px;
+                font-weight: 800;
+            }}
+            """)
+        self.printer_badge.show()
+        self._update_status_badge_position()
+
+    def clear_printer_status(self):
+        self.printer_badge.clear()
+        self.printer_badge.hide()
         self._update_status_badge_position()
 
 

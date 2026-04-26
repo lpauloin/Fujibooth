@@ -1,24 +1,29 @@
+import logging
 import signal
 import sys
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from .logging_config import setup as setup_logging
 from .config import load_settings
 from .ui.main_window import MainWindow
 
+logger = logging.getLogger(__name__)
+
 
 def main():
-    print('[APP] demarrage application')
+    setup_logging()
+    logger.info("demarrage application")
     settings = load_settings()
 
     app = QApplication.instance() or QApplication(sys.argv)
 
-    print('[APP] creation MainWindow')
+    logger.debug("creation MainWindow")
     window = MainWindow(settings)
     app.aboutToQuit.connect(window.shutdown)
 
-    print('[APP] start_services()')
+    logger.debug("start_services()")
     window.start_services()
 
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -30,5 +35,5 @@ def main():
     return app.exec()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())

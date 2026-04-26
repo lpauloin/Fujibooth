@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Slot
@@ -15,12 +16,15 @@ from PySide6.QtWidgets import (
 from ..backends.fujifilm_sdk_backend import FujifilmSdkBackend
 from ..models.remote import RemoteButton, RemoteFocus
 from ..models.state import BackendState, BoothState
+from ..services.bluetooth_monitor import BluetoothPrinterMonitor, BluetoothPrinterMonitorConfig
 from ..services.photo_repository import PhotoRepository
 from ..services.printer import PrintService
 from ..services.remote_control import RemoteControlService
 from ..services.usb_monitor import USBMonitor, USBMonitorConfig
 from .exposure_bar import ExposureBarWidget
 from .widgets import GalleryWidget, LiveViewWidget
+
+logger = logging.getLogger(__name__)
 
 FREEZE_SECONDS = 10
 RETURN_TO_LIVEVIEW_SECONDS = 5
@@ -57,7 +61,7 @@ MESSAGE_STYLE = (
 class MainWindow(QMainWindow):
     def __init__(self, settings):
         super().__init__()
-        print("[UI] MainWindow.__init__()")
+        logger.info("MainWindow.__init__()")
 
         self.settings = settings
 
@@ -76,6 +80,9 @@ class MainWindow(QMainWindow):
         self._remote_control_index = 0
         self._remote_in_setting = False
         self._remote_connected = False
+        self._printer_connected = False
+        self._printer_label = "Printer"
+        self._printer_monitor_started = False
         self._badges_visible = True
 
         self.setWindowTitle(settings.app.window_title)
@@ -84,7 +91,7 @@ class MainWindow(QMainWindow):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setFocus()
 
-        print("[UI] building services")
+        logger.info("building services")
         self.repository = PhotoRepository(
             captures_dir=settings.captures_path,
             output_dir=settings.output_path,
@@ -94,16 +101,42 @@ class MainWindow(QMainWindow):
         )
         self.print_service = PrintService(
             enabled=settings.printing.enabled,
+            mode=settings.printing.mode,
             command=settings.printing.command,
+            device_name=settings.printing.device_name,
+            device_address=settings.printing.device_address,
+            wait_after_print_seconds=settings.printing.wait_after_print_seconds,
+            max_queue_size=settings.printing.max_queue_size,
+            auto_rotate_landscape=settings.printing.auto_rotate_landscape,
+            image_fit=settings.printing.image_fit,
+            autocontrast=settings.printing.autocontrast,
+            color_boost=settings.printing.color_boost,
+            contrast_boost=settings.printing.contrast_boost,
+            brightness_boost=settings.printing.brightness_boost,
+            sharpness_boost=settings.printing.sharpness_boost,
         )
         self.backend = FujifilmSdkBackend(settings=settings, repository=self.repository)
-        print(f"[UI] backend selected: {self.backend.__class__.__name__}")
+        logger.info("backend selected: %s", self.backend.__class__.__name__)
+
+        self.printer_monitor = BluetoothPrinterMonitor(
+            BluetoothPrinterMonitorConfig(
+                enabled=settings.printing.monitor_enabled,
+                device_name=settings.printing.device_name,
+                device_address=settings.printing.device_address,
+                scan_interval_ms=settings.printing.scan_interval_ms,
+                scan_duration_ms=settings.printing.scan_duration_ms,
+                lost_after_misses=settings.printing.lost_after_misses,
+                initial_grace_ms=settings.printing.initial_grace_ms,
+                cooldown_after_busy_ms=settings.printing.cooldown_after_busy_ms,
+            ),
+            is_busy_callback=self.print_service.is_busy,
+        )
 
         self.remote = RemoteControlService(parent=self)
         self.remote.button_pressed.connect(self._on_remote_button)
         self.remote.hid_connected.connect(self._on_remote_hid_connected)
         self.remote.hid_disconnected.connect(self._on_remote_hid_disconnected)
-        print(f"[UI] remote control enabled={settings.remote.enabled}")
+        logger.info("remote control enabled=%s", settings.remote.enabled)
 
         self.usb_monitor = USBMonitor(
             USBMonitorConfig(
@@ -112,12 +145,10 @@ class MainWindow(QMainWindow):
                 camera_name_contains=settings.camera.usb.camera_name_contains,
             )
         )
-        print(
-            "[UI] usb_monitor config "
-            f"enabled={settings.camera.usb.enabled} "
-            f"vendor_id={settings.camera.usb.vendor_id} "
-            f"product_ids={settings.camera.usb.product_ids} "
-            f"camera_name_contains={settings.camera.usb.camera_name_contains}"
+        logger.info(
+            "usb_monitor config enabled=%s vendor_id=%s product_ids=%s camera_name_contains=%s",
+            settings.camera.usb.enabled, settings.camera.usb.vendor_id,
+            settings.camera.usb.product_ids, settings.camera.usb.camera_name_contains,
         )
 
         self.freeze_timer = QTimer(self)
@@ -155,17 +186,15 @@ class MainWindow(QMainWindow):
         self._debug_dump_ui_state("after __init__")
 
     def _debug_dump_ui_state(self, origin):
-        print(
-            f"[UI-DEBUG] {origin} | "
-            f"state={self.state} "
-            f"camera_connected={self._camera_connected} "
-            f"camera_label={self._camera_label} "
-            f"usb_monitor_started={self._usb_monitor_started} "
-            f"selected_photo={self.selected_photo}"
+        logger.debug(
+            "%s | state=%s camera_connected=%s camera_label=%s "
+            "usb_monitor_started=%s selected_photo=%s",
+            origin, self.state, self._camera_connected, self._camera_label,
+            self._usb_monitor_started, self.selected_photo,
         )
 
     def _setup_ui(self):
-        print("[UI] _setup_ui()")
+        logger.debug("_setup_ui()")
         root = QWidget(self)
 
         layout = QVBoxLayout(root)
@@ -218,10 +247,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.gallery_card)
 
         self.setCentralWidget(root)
-        print("[UI] _setup_ui() done")
+        logger.debug("_setup_ui() done")
 
     def _wire_signals(self):
-        print("[UI] _wire_signals()")
+        logger.debug("_wire_signals()")
 
         self.live_view.clicked.connect(self.start_countdown)
         self.gallery.photo_selected.connect(self.on_photo_selected)
@@ -245,23 +274,26 @@ class MainWindow(QMainWindow):
         self.usb_monitor.connected.connect(self._on_usb_monitor_connected)
         self.usb_monitor.disconnected.connect(self._on_usb_monitor_disconnected)
 
-        print("[UI] _wire_signals() done")
+        self.printer_monitor.connected.connect(self._on_printer_connected)
+        self.printer_monitor.disconnected.connect(self._on_printer_disconnected)
+
+        logger.debug("_wire_signals() done")
 
     def _set_state(self, state):
         if self.state != state:
-            print(f"[UI] state {self.state} -> {state}")
+            logger.info("state %s -> %s", self.state, state)
         self.state = state
         live_states = {BoothState.LIVE_VIEW}
         self.exposure_bar.setVisible(state in live_states)
 
     def _show_gallery(self, visible):
-        print(f"[UI] _show_gallery visible={visible}")
+        logger.debug("_show_gallery visible=%s", visible)
         self.gallery_card.setVisible(visible)
 
     def _show_camera_badge(self, visible):
-        print(
-            f"[UI] _show_camera_badge visible={visible} "
-            f"camera_connected={self._camera_connected} camera_label={self._camera_label}"
+        logger.debug(
+            "_show_camera_badge visible=%s camera_connected=%s camera_label=%s",
+            visible, self._camera_connected, self._camera_label,
         )
         self._badges_visible = visible
         if visible:
@@ -277,9 +309,11 @@ class MainWindow(QMainWindow):
             )
             self.live_view.set_status(text, color)
             self._refresh_remote_badge()
+            self._refresh_printer_badge()
         else:
             self.live_view.clear_status()
             self.live_view.clear_remote_status()
+            self.live_view.clear_printer_status()
 
     def _refresh_remote_badge(self):
         if not self._badges_visible:
@@ -291,8 +325,19 @@ class MainWindow(QMainWindow):
         else:
             self.live_view.clear_remote_status()
 
+    def _refresh_printer_badge(self):
+        if not self._badges_visible:
+            return
+        if self._printer_connected:
+            self.live_view.set_printer_status(
+                f"{self._printer_label} connected",
+                self.settings.ui.status_connected_color,
+            )
+        else:
+            self.live_view.clear_printer_status()
+
     def _set_exposure_controls_enabled(self, enabled):
-        print(f"[UI] _set_exposure_controls_enabled enabled={enabled}")
+        logger.debug("_set_exposure_controls_enabled enabled=%s", enabled)
         self.exposure_bar.set_controls_enabled(enabled)
 
     def _set_combo_by_value(self, combo, raw_value):
@@ -302,7 +347,7 @@ class MainWindow(QMainWindow):
         if index >= 0:
             combo.setCurrentIndex(index)
         else:
-            print(f"[UI] _set_combo_by_value: value {raw_value!r} not found in combo")
+            logger.warning("_set_combo_by_value: value %r not found in combo", raw_value)
 
     def _set_combo_auto(self, combo):
         combo.blockSignals(True)
@@ -329,16 +374,16 @@ class MainWindow(QMainWindow):
             self.aperture_combo.setEnabled(False)
 
     def _load_exposure_controls(self):
-        print("[UI] _load_exposure_controls()")
+        logger.debug("_load_exposure_controls()")
 
         # Exposure refresh is asynchronous now. The backend serializes every
         # SDK call through its command queue, so the UI only requests work here.
         if getattr(self, "_loading_exposure_controls", False):
-            print("[UI] _load_exposure_controls skipped: already running")
+            logger.debug("_load_exposure_controls skipped: already running")
             return
 
         if not self._camera_connected:
-            print("[UI] _load_exposure_controls skipped: camera not connected")
+            logger.debug("_load_exposure_controls skipped: camera not connected")
             return
 
         self._loading_exposure_controls = True
@@ -347,7 +392,7 @@ class MainWindow(QMainWindow):
         self.backend.request_exposure_data()
 
     def _apply_idle_ui(self):
-        print("[UI] _apply_idle_ui()")
+        logger.debug("_apply_idle_ui()")
         self._show_gallery(True)
         self.print_button.hide()
         self.live_view.hide_overlay()
@@ -355,41 +400,46 @@ class MainWindow(QMainWindow):
         self._show_camera_badge(True)
 
     def _apply_countdown_ui(self):
-        print("[UI] _apply_countdown_ui()")
+        logger.debug("_apply_countdown_ui()")
         self._show_gallery(False)
         self.print_button.hide()
         self.live_view.set_freeze_frame(False)
         self._show_camera_badge(False)
 
     def _apply_capture_ui(self):
-        print("[UI] _apply_capture_ui()")
+        logger.debug("_apply_capture_ui()")
         self._show_gallery(False)
         self.print_button.hide()
         self.live_view.set_freeze_frame(False)
         self._show_camera_badge(False)
 
     def _apply_freeze_ui(self):
-        print("[UI] _apply_freeze_ui()")
+        logger.debug("_apply_freeze_ui()")
         self._show_gallery(False)
         self.print_button.hide()
         self.live_view.set_freeze_frame(False)
         self._show_camera_badge(False)
 
     def _apply_photo_selected_ui(self):
-        print("[UI] _apply_photo_selected_ui()")
+        logger.debug("_apply_photo_selected_ui()")
         self._show_gallery(True)
         self.live_view.set_freeze_frame(False)
         self._show_camera_badge(True)
 
     def start_services(self):
-        print("[UI] start_services() begin")
+        logger.info("start_services() begin")
         self.backend.start()
-        print("[UI] backend.start() done")
+        logger.info("backend.start() done")
 
         if self.settings.camera.usb.enabled:
-            print("[UI] usb_monitor.start()")
+            logger.info("usb_monitor.start()")
             self.usb_monitor.start()
             self._usb_monitor_started = True
+
+        if self.settings.printing.monitor_enabled:
+            logger.info("printer_monitor.start()")
+            self.printer_monitor.start()
+            self._printer_monitor_started = True
 
         rc = self.settings.remote
         if rc.enabled:
@@ -398,9 +448,7 @@ class MainWindow(QMainWindow):
             if rc.hid_vendor_id and rc.hid_product_id:
                 self.remote.start_hid_capture(rc.hid_vendor_id, rc.hid_product_id)
             else:
-                print(
-                    "[REMOTE] hid_vendor_id/hid_product_id not set — HID capture disabled"
-                )
+                logger.warning("hid_vendor_id/hid_product_id not set — HID capture disabled")
 
         if self.settings.app.fullscreen:
             self.showFullScreen()
@@ -410,41 +458,52 @@ class MainWindow(QMainWindow):
         self._debug_dump_ui_state("after start_services")
 
     def stop_services(self):
-        print("[UI] stop_services()")
+        logger.info("stop_services()")
         self.countdown_timer.stop()
         self.freeze_timer.stop()
         self.print_button_timer.stop()
         self.return_timer.stop()
         self.remote.stop()
+        if self._printer_monitor_started:
+            try:
+                self.printer_monitor.stop()
+            except Exception as exc:
+                logger.error("error stopping printer_monitor: %s", exc)
+            self._printer_monitor_started = False
+
+        try:
+            self.print_service.stop()
+        except Exception as exc:
+            logger.error("error stopping print_service: %s", exc)
 
         if self._usb_monitor_started:
             try:
                 self.usb_monitor.stop()
             except Exception as exc:
-                print(f"[UI] error stopping usb_monitor: {exc}")
+                logger.error("error stopping usb_monitor: %s", exc)
             self._usb_monitor_started = False
 
         try:
             self.backend.stop()
         except Exception as exc:
-            print(f"[UI] error stopping backend: {exc}")
+            logger.error("error stopping backend: %s", exc)
 
         self._debug_dump_ui_state("after stop_services")
 
     def shutdown(self):
         if self._is_shutting_down:
             return
-        print("[UI] shutdown()")
+        logger.info("shutdown()")
         self._is_shutting_down = True
         self.stop_services()
 
     def closeEvent(self, event):
-        print("[UI] closeEvent()")
+        logger.info("closeEvent()")
         self.shutdown()
         super().closeEvent(event)
 
     def keyPressEvent(self, event):
-        print(f"[UI] keyPressEvent key={event.key()}")
+        logger.debug("keyPressEvent key=%s", event.key())
         if event.key() == Qt.Key_Escape:
             self.shutdown()
             self.close()
@@ -459,8 +518,9 @@ class MainWindow(QMainWindow):
 
     @Slot(RemoteButton)
     def _on_remote_button(self, button):
-        print(
-            f"[UI] remote button={button.name} state={self.state} focus={self._remote_focus.name} in_setting={self._remote_in_setting}"
+        logger.debug(
+            "remote button=%s state=%s focus=%s in_setting=%s",
+            button.name, self.state, self._remote_focus.name, self._remote_in_setting,
         )
 
         _busy = {BoothState.COUNTDOWN, BoothState.CAPTURING, BoothState.DOWNLOADING}
@@ -538,7 +598,7 @@ class MainWindow(QMainWindow):
         else:
             self.gallery.set_remote_selection(-1)
             self.exposure_bar.set_focused_control(self._remote_control_index)
-        print(f"[UI] remote focus → {focus.name}")
+        logger.info("remote focus → %s", focus.name)
 
     def _remote_gallery_navigate(self, delta):
         photos = self.repository.recent(limit=50)
@@ -588,7 +648,7 @@ class MainWindow(QMainWindow):
             return
         self._remote_in_setting = True
         self.exposure_bar.set_editing(self._remote_control_index, True)
-        print(f"[UI] remote: editing control {self._remote_control_index}")
+        logger.info("remote: editing control %s", self._remote_control_index)
 
     def _remote_setting_navigate(self, delta):
         combos = [
@@ -609,7 +669,7 @@ class MainWindow(QMainWindow):
         self._remote_in_setting = False
         self.exposure_bar.set_editing(self._remote_control_index, False)
         field = ["ae_mode", "iso", "shutter", "aperture"][self._remote_control_index]
-        print(f"[UI] remote: confirmed {field}")
+        logger.info("remote: confirmed %s", field)
         self.on_exposure_changed(field)
 
     def _reset_remote_state(self):
@@ -622,21 +682,19 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def start_countdown(self):
-        print(
-            f"[UI] start_countdown() state={self.state} camera_connected={self._camera_connected}"
-        )
+        logger.info("start_countdown() state=%s camera_connected=%s", self.state, self._camera_connected)
 
         if self.state not in {
             BoothState.LIVE_VIEW,
             BoothState.ERROR,
             BoothState.PHOTO_SELECTED,
         }:
-            print(f"[UI] start_countdown ignored: state={self.state}")
+            logger.debug("start_countdown ignored: state=%s", self.state)
             return
 
         if not self._camera_connected:
             self.message_label.setText("Waiting for FUJIFILM camera")
-            print("[UI] start_countdown aborted: no camera connected")
+            logger.debug("start_countdown aborted: no camera connected")
             return
 
         self._reset_remote_state()
@@ -657,7 +715,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _countdown_tick(self):
         self.countdown_value -= 1
-        print(f"[UI] _countdown_tick -> {self.countdown_value}")
+        logger.debug("_countdown_tick -> %s", self.countdown_value)
 
         if self.countdown_value > 0:
             self.live_view.show_overlay_text(str(self.countdown_value), font_px=150)
@@ -670,18 +728,32 @@ class MainWindow(QMainWindow):
         self.message_label.setText("Capturing...")
 
         try:
-            print("[UI] backend.trigger_capture()")
+            logger.info("backend.trigger_capture()")
             self.backend.trigger_capture()
         except Exception as exc:
-            print(f"[UI] trigger_capture exception: {exc}")
+            logger.error("trigger_capture exception: %s", exc)
             self.live_view.hide_overlay()
             self._set_state(BoothState.ERROR)
             self._apply_idle_ui()
             self.message_label.setText(str(exc))
 
+    @Slot(dict)
+    def _on_printer_connected(self, payload):
+        logger.info("printer connected payload=%s", payload)
+        self._printer_connected = True
+        self._printer_label = payload.get("label") or payload.get("name") or "Printer"
+        self._refresh_printer_badge()
+
+    @Slot()
+    def _on_printer_disconnected(self):
+        logger.info("printer disconnected")
+        self._printer_connected = False
+        self._printer_label = "Printer"
+        self._refresh_printer_badge()
+
     @Slot(str)
     def on_exposure_changed(self, field):
-        print(f"[UI] on_exposure_changed field={field}")
+        logger.info("on_exposure_changed field=%s", field)
         if not self._camera_connected:
             self.message_label.setText("Waiting for FUJIFILM camera")
             return
@@ -694,8 +766,9 @@ class MainWindow(QMainWindow):
         shutter = self.shutter_combo.currentData() if field == "shutter" else None
         aperture = self.aperture_combo.currentData() if field == "aperture" else None
 
-        print(
-            f"[UI] applying exposure ae_mode={ae_mode} iso={iso} shutter={shutter} aperture={aperture}"
+        logger.info(
+            "applying exposure ae_mode=%s iso=%s shutter=%s aperture=%s",
+            ae_mode, iso, shutter, aperture,
         )
 
         self.backend.set_exposure(
@@ -705,7 +778,7 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def on_exposure_data_ready(self, payload):
-        print(f"[UI] on_exposure_data_ready payload_keys={list(payload.keys())}")
+        logger.info("on_exposure_data_ready payload_keys=%s", list(payload.keys()))
 
         options = payload.get("options", {})
         state = payload.get("state", {})
@@ -748,10 +821,9 @@ class MainWindow(QMainWindow):
         shutter_available = self.shutter_combo.count() > 0
         aperture_available = self.aperture_combo.count() > 0
 
-        print(
-            f"[UI] exposure UX sync ae_mode={ae_mode} "
-            f"shutter_available={shutter_available} "
-            f"aperture_available={aperture_available}"
+        logger.info(
+            "exposure UX sync ae_mode=%s shutter_available=%s aperture_available=%s",
+            ae_mode, shutter_available, aperture_available,
         )
 
         self.iso_combo.setEnabled(self._camera_connected)
@@ -772,13 +844,11 @@ class MainWindow(QMainWindow):
 
         self._loading_exposure_controls = False
 
-        print(
-            f"[UI] exposure controls refreshed "
-            f"ae_mode_count={self.ae_mode_combo.count()} "
-            f"iso_count={self.iso_combo.count()} "
-            f"shutter_count={self.shutter_combo.count()} "
-            f"aperture_count={self.aperture_combo.count()} "
-            f"state={state}"
+        logger.info(
+            "exposure controls refreshed ae_mode_count=%s iso_count=%s "
+            "shutter_count=%s aperture_count=%s state=%s",
+            self.ae_mode_combo.count(), self.iso_combo.count(),
+            self.shutter_combo.count(), self.aperture_combo.count(), state,
         )
 
         if self._camera_connected:
@@ -812,7 +882,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_exposure_data_failed(self, message):
-        print(f"[UI] on_exposure_data_failed message={message}")
+        logger.warning("on_exposure_data_failed message=%s", message)
         self._loading_exposure_controls = False
         self._set_exposure_controls_enabled(self._camera_connected)
         if self._camera_connected:
@@ -823,26 +893,24 @@ class MainWindow(QMainWindow):
         if not isinstance(pixmap, QPixmap):
             pixmap = QPixmap.fromImage(pixmap)
 
-        print(f"[UI] on_live_view_updated null={pixmap.isNull()} size={pixmap.size()}")
         if pixmap.isNull():
             return
 
         self.current_live_pixmap = pixmap
 
         if self.state in {BoothState.FREEZE, BoothState.PHOTO_SELECTED}:
-            print("[UI] on_live_view_updated ignored: state is freeze/photo_selected")
             return
 
         self.live_view.set_pixmap(pixmap, apply_frame=True)
 
     @Slot(str)
     def on_photo_captured(self, display_path_str):
-        print(f"[UI] on_photo_captured path={display_path_str}")
+        logger.info("on_photo_captured path=%s", display_path_str)
         display_path = Path(display_path_str)
 
         freeze_pixmap = QPixmap(str(display_path))
         if freeze_pixmap.isNull():
-            print("[UI] on_photo_captured freeze pixmap is null")
+            logger.error("on_photo_captured freeze pixmap is null")
             self._set_state(BoothState.ERROR)
             self._apply_idle_ui()
             self.message_label.setText("Error loading photo")
@@ -863,7 +931,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _return_to_live_view(self):
-        print("[UI] _return_to_live_view()")
+        logger.info("_return_to_live_view()")
         self.freeze_timer.stop()
         self.return_timer.stop()
         self.print_button_timer.stop()
@@ -892,14 +960,14 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_photo_selected(self, photo_path_str):
-        print(f"[UI] on_photo_selected path={photo_path_str} state={self.state}")
+        logger.info("on_photo_selected path=%s state=%s", photo_path_str, self.state)
         if self.state in {
             BoothState.COUNTDOWN,
             BoothState.CAPTURING,
             BoothState.DOWNLOADING,
             BoothState.FREEZE,
         }:
-            print("[UI] on_photo_selected ignored")
+            logger.debug("on_photo_selected ignored")
             return
 
         self.return_timer.stop()
@@ -925,7 +993,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def on_print_clicked(self):
-        print(f"[UI] on_print_clicked selected_photo={self.selected_photo}")
+        logger.info("on_print_clicked selected_photo=%s", self.selected_photo)
         if not self.selected_photo:
             return
 
@@ -933,7 +1001,7 @@ class MainWindow(QMainWindow):
 
         self._set_state(BoothState.PRINTING)
         ok, message = self.print_service.print_photo(self.selected_photo)
-        print(f"[UI] print result ok={ok} message={message}")
+        logger.info("print result ok=%s message=%s", ok, message)
         self.message_label.setText(message)
 
         if ok:
@@ -945,11 +1013,9 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def on_backend_state_changed(self, state):
-        print(
-            f"[UI] on_backend_state_changed raw={state} current_ui_state={self.state}"
-        )
+        logger.info("on_backend_state_changed raw=%s current_ui_state=%s", state, self.state)
         if not isinstance(state, BackendState):
-            print("[UI] on_backend_state_changed ignored: not BackendState")
+            logger.debug("on_backend_state_changed ignored: not BackendState")
             return
 
         if (
@@ -962,7 +1028,7 @@ class MainWindow(QMainWindow):
             }
             and state is not BackendState.WAITING_FOR_CAMERA
         ):
-            print("[UI] on_backend_state_changed ignored: strong local UI state")
+            logger.debug("on_backend_state_changed ignored: strong local UI state")
             return
 
         if state is BackendState.CAMERA_READY:
@@ -1008,17 +1074,17 @@ class MainWindow(QMainWindow):
 
     @Slot(dict)
     def _on_usb_monitor_connected(self, payload):
-        print(f"[UI] _on_usb_monitor_connected payload={payload}")
+        logger.info("_on_usb_monitor_connected payload=%s", payload)
         self.backend.handle_usb_connected(payload)
 
     @Slot()
     def _on_usb_monitor_disconnected(self):
-        print("[UI] _on_usb_monitor_disconnected()")
+        logger.info("_on_usb_monitor_disconnected()")
         self.backend.handle_usb_disconnected()
 
     @Slot(dict)
     def _on_backend_camera_connected(self, payload):
-        print(f"[UI] _on_backend_camera_connected payload={payload}")
+        logger.info("_on_backend_camera_connected payload=%s", payload)
         self._camera_connected = True
         self._camera_label = (
             payload.get("label", "FUJIFILM").replace(" connected", "").strip()
@@ -1030,7 +1096,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_backend_camera_disconnected(self):
-        print("[UI] _on_backend_camera_disconnected()")
+        logger.info("_on_backend_camera_disconnected()")
         self._camera_connected = False
         self._camera_label = "FUJIFILM"
         self._loading_exposure_controls = False
@@ -1049,7 +1115,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_error(self, message):
-        print(f"[UI] on_error message={message}")
+        logger.error("on_error message=%s", message)
         self._loading_exposure_controls = False
         self._set_state(BoothState.ERROR)
         self._apply_idle_ui()
@@ -1059,24 +1125,24 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_remote_hid_connected(self, name):
-        print(f"[UI] remote HID connected name={name}")
+        logger.info("remote HID connected name=%s", name)
         self._remote_connected = True
         self._refresh_remote_badge()
 
     @Slot(str)
     def _on_remote_hid_disconnected(self, name):
-        print(f"[UI] remote HID disconnected name={name}")
+        logger.info("remote HID disconnected name=%s", name)
         self._remote_connected = False
         self._refresh_remote_badge()
 
     def refresh_gallery(self):
         photos = self.repository.recent(limit=50)
-        print(f"[UI] refresh_gallery photos={len(photos)}")
+        logger.info("refresh_gallery photos=%s", len(photos))
         self.gallery.set_photos(photos)
 
 
 def run_app(settings):
-    print("[UI] run_app()")
+    logger.info("run_app()")
     app = QApplication.instance() or QApplication([])
     window = MainWindow(settings)
     window.start_services()

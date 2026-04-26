@@ -1,3 +1,4 @@
+import logging
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
@@ -8,6 +9,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+logger = logging.getLogger(__name__)
 
 COMBO_STYLE = """
 QComboBox {
@@ -229,12 +232,12 @@ class ExposureBarWidget(QWidget):
 
     def set_focused_control(self, index):
         """Highlight the control at index with a red border (-1 = clear all)."""
-        print(f"[EXPOSURE] set_focused_control index={index}")
+        logger.debug("set_focused_control index=%s", index)
         for i, col in enumerate(self._columns):
             col.set_focused(i == index)
 
     def set_editing(self, index, editing):
         """Show an editing (brighter) border on the control being modified."""
-        print(f"[EXPOSURE] set_editing index={index} editing={editing}")
+        logger.debug("set_editing index=%s editing=%s", index, editing)
         for i, col in enumerate(self._columns):
             col.set_focused(i == index, editing=(i == index and editing))

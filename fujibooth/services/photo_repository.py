@@ -1,8 +1,11 @@
+import logging
 from datetime import datetime
-from pathlib import Path
 import shutil
 
+
 from PIL import Image as PILImage
+
+logger = logging.getLogger(__name__)
 
 
 class PhotoRepository:
@@ -19,10 +22,12 @@ class PhotoRepository:
 
         if frame_path:
             if not frame_path.exists():
-                print(f"[REPO] frame PNG not found: {frame_path}")
+                logger.warning("frame PNG not found: %s", frame_path)
             else:
                 self._frame_image = PILImage.open(frame_path).convert("RGBA")
-                print(f"[REPO] frame loaded: {frame_path} size={self._frame_image.size}")
+                logger.info(
+                    "frame loaded: %s size=%s", frame_path, self._frame_image.size
+                )
 
     @property
     def has_frame(self):
@@ -36,7 +41,7 @@ class PhotoRepository:
         stem = datetime.now().strftime(self.filename_pattern)
         target = self._unique_path(self.captures_dir, stem, suffix)
         shutil.move(str(source_path), target)
-        print(f"[REPO] raw saved: {target}")
+        logger.info("raw saved: %s", target)
         return target
 
     def frame(self, raw_path):
@@ -50,16 +55,17 @@ class PhotoRepository:
             composite = PILImage.alpha_composite(photo, overlay)
             composite.convert("RGB").save(output, quality=95)
         except Exception as exc:
-            print(f"[REPO] frame error: {exc}")
+            logger.error("frame error: %s", exc)
             raise
-        print(f"[REPO] framed saved: {output}")
+        logger.info("framed saved: %s", output)
         return output
 
     def recent(self, limit=50):
         """List photos for gallery display (framed if a frame is loaded, else raw)."""
         search_dir = self.output_dir if self.has_frame else self.captures_dir
         photos = [
-            p for p in search_dir.iterdir()
+            p
+            for p in search_dir.iterdir()
             if p.is_file() and p.suffix.lower() in self.extensions
         ]
         photos.sort(key=lambda p: p.stat().st_mtime, reverse=True)

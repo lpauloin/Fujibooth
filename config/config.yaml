@@ -24,8 +24,26 @@ storage:
   frame_path: "./config/frame.png"
 
 printing:
-  enabled: false
-  command: ""
+  enabled: true
+  monitor_enabled: true
+  scan_interval_ms: 15000
+  scan_duration_ms: 1500
+  lost_after_misses: 3
+  initial_grace_ms: 10000
+  cooldown_after_busy_ms: 30000
+  mode: "instax_ble"          # auto | instax_ble | command | stub
+  command: ""           # e.g. lp -d MyPrinter, or use {path}
+  device_name: ""       # e.g. INSTAX-12345678, optional
+  device_address: ""    # e.g. FA:AB:BC:xx:xx:xx, optional
+  wait_after_print_seconds: 60
+  max_queue_size: 3
+  auto_rotate_landscape: true
+  image_fit: "cover"          # cover = crop portrait plein cadre, contain = bandes blanches
+  autocontrast: true
+  color_boost: 1.25
+  contrast_boost: 1.15
+  brightness_boost: 1.05
+  sharpness_boost: 1.05
 
 remote:
   enabled: true

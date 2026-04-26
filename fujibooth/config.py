@@ -49,7 +49,29 @@ class StorageConfig:
 @dataclass(slots=True)
 class PrintingConfig:
     enabled: bool = False
+    monitor_enabled: bool = True
+    scan_interval_ms: int = 15000
+    scan_duration_ms: int = 1500
+    lost_after_misses: int = 3
+    initial_grace_ms: int = 10000
+    cooldown_after_busy_ms: int = 30000
+    # auto: command if command is set, otherwise local Instax Mini Link BLE
+    # command: external command such as lp
+    # instax_ble: local minimal simplepyble client for Instax Mini Link
+    # stub: development mode, no hardware call
+    mode: str = "auto"
     command: str = ""
+    device_name: str = ""
+    device_address: str = ""
+    wait_after_print_seconds: int = 60
+    max_queue_size: int = 3
+    auto_rotate_landscape: bool = True
+    image_fit: str = "cover"
+    autocontrast: bool = True
+    color_boost: float = 1.25
+    contrast_boost: float = 1.15
+    brightness_boost: float = 1.05
+    sharpness_boost: float = 1.05
 
 
 @dataclass(slots=True)
