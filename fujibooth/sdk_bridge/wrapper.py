@@ -196,9 +196,7 @@ MODEL_ISO_BLOCKLIST = {
     "X-T4": {-4},
 }
 
-MODEL_APERTURE_BLOCKLIST = {
-    "X-T4": set(),
-}
+MODEL_APERTURE_BLOCKLIST = {}
 
 
 def _blocklist_for_model(table, model):
@@ -229,7 +227,6 @@ class FujifilmSdkAdapter:
         self._last_frame = QImage()
 
         self._camera_opened_monotonic = None
-        self._min_live_poll_interval_s = 0.10
         self._camera_model = None
 
         logger.debug(f"init sdk_root={self.sdk_root} xapi_path={self.xapi_path}")
@@ -1008,6 +1005,6 @@ class FujifilmSdkAdapter:
             if was_live:
                 self._wait_interruptible(0.3)
                 logger.debug("restarting live view after exposure change")
-                lib.start_live_view(handle)
+                self.start_live_view_once(lib, handle)
                 self._set_state(WrapperState.LIVE, "live view restored after exposure change")
                 logger.debug("live view restored after exposure change")

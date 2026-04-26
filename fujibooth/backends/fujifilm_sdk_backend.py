@@ -88,7 +88,6 @@ class FujifilmSdkBackend(CameraBackend):
         with self._lock:
             return self.state is SessionState.STOPPING
 
-
     def _safe_is_session_open(self):
         try:
             connected = self.adapter.is_connected()
@@ -511,7 +510,7 @@ class FujifilmSdkBackend(CameraBackend):
 
         if not self._safe_is_session_open():
             self._handle_session_lost_from_worker(
-                f"start_live_view: session not open", emit_signal=True
+                "start_live_view: session not open", emit_signal=True
             )
             return False
 
@@ -786,6 +785,10 @@ class FujifilmSdkBackend(CameraBackend):
         except Exception as exc:
             logger.error(f"repository error: {exc}")
             self.emit_error(exc)
+            if was_live and self._safe_is_session_open() and not self._is_stopping():
+                self._try_start_live_view_from_worker("recovered after repository error")
+            elif self._safe_is_session_open() and not self._is_stopping():
+                self._set_session_state(SessionState.READY, "repository error recovery")
             return
         self.emit_photo(display)
 
