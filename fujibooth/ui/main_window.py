@@ -16,7 +16,10 @@ from PySide6.QtWidgets import (
 from ..backends.fujifilm_sdk_backend import FujifilmSdkBackend
 from ..models.remote import RemoteButton, RemoteFocus
 from ..models.state import BackendState, BoothState
-from ..services.bluetooth_monitor import BluetoothPrinterMonitor, BluetoothPrinterMonitorConfig
+from ..services.bluetooth_monitor import (
+    BluetoothPrinterMonitor,
+    BluetoothPrinterMonitorConfig,
+)
 from ..services.photo_repository import PhotoRepository
 from ..services.printer import PrintService
 from ..services.remote_control import RemoteControlService
@@ -147,8 +150,10 @@ class MainWindow(QMainWindow):
         )
         logger.info(
             "usb_monitor config enabled=%s vendor_id=%s product_ids=%s camera_name_contains=%s",
-            settings.camera.usb.enabled, settings.camera.usb.vendor_id,
-            settings.camera.usb.product_ids, settings.camera.usb.camera_name_contains,
+            settings.camera.usb.enabled,
+            settings.camera.usb.vendor_id,
+            settings.camera.usb.product_ids,
+            settings.camera.usb.camera_name_contains,
         )
 
         self.freeze_timer = QTimer(self)
@@ -189,8 +194,12 @@ class MainWindow(QMainWindow):
         logger.debug(
             "%s | state=%s camera_connected=%s camera_label=%s "
             "usb_monitor_started=%s selected_photo=%s",
-            origin, self.state, self._camera_connected, self._camera_label,
-            self._usb_monitor_started, self.selected_photo,
+            origin,
+            self.state,
+            self._camera_connected,
+            self._camera_label,
+            self._usb_monitor_started,
+            self.selected_photo,
         )
 
     def _setup_ui(self):
@@ -202,9 +211,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
 
         self.live_view = LiveViewWidget()
-        self.live_view.set_status(
-            "Waiting for camera", self.settings.ui.status_disconnected_color
-        )
+        self.live_view.set_status("📷", self.settings.ui.status_disconnected_color)
         layout.addWidget(self.live_view, stretch=1)
 
         self.exposure_bar = ExposureBarWidget()
@@ -293,21 +300,18 @@ class MainWindow(QMainWindow):
     def _show_camera_badge(self, visible):
         logger.debug(
             "_show_camera_badge visible=%s camera_connected=%s camera_label=%s",
-            visible, self._camera_connected, self._camera_label,
+            visible,
+            self._camera_connected,
+            self._camera_label,
         )
         self._badges_visible = visible
         if visible:
-            text = (
-                f"{self._camera_label} connected"
-                if self._camera_connected
-                else "Waiting for camera"
-            )
             color = (
                 self.settings.ui.status_connected_color
                 if self._camera_connected
                 else self.settings.ui.status_disconnected_color
             )
-            self.live_view.set_status(text, color)
+            self.live_view.set_status("📷", color)
             self._refresh_remote_badge()
             self._refresh_printer_badge()
         else:
@@ -318,23 +322,22 @@ class MainWindow(QMainWindow):
     def _refresh_remote_badge(self):
         if not self._badges_visible:
             return
-        if self._remote_connected:
-            self.live_view.set_remote_status(
-                "Remote connected", self.settings.ui.status_connected_color
-            )
-        else:
-            self.live_view.clear_remote_status()
+        color = (
+            self.settings.ui.status_connected_color
+            if self._remote_connected
+            else self.settings.ui.status_disconnected_color
+        )
+        self.live_view.set_remote_status("📱️", color)
 
     def _refresh_printer_badge(self):
         if not self._badges_visible:
             return
-        if self._printer_connected:
-            self.live_view.set_printer_status(
-                f"{self._printer_label} connected",
-                self.settings.ui.status_connected_color,
-            )
-        else:
-            self.live_view.clear_printer_status()
+        color = (
+            self.settings.ui.status_connected_color
+            if self._printer_connected
+            else self.settings.ui.status_disconnected_color
+        )
+        self.live_view.set_printer_status("🖨️", color)
 
     def _set_exposure_controls_enabled(self, enabled):
         logger.debug("_set_exposure_controls_enabled enabled=%s", enabled)
@@ -347,7 +350,9 @@ class MainWindow(QMainWindow):
         if index >= 0:
             combo.setCurrentIndex(index)
         else:
-            logger.warning("_set_combo_by_value: value %r not found in combo", raw_value)
+            logger.warning(
+                "_set_combo_by_value: value %r not found in combo", raw_value
+            )
 
     def _set_combo_auto(self, combo):
         combo.blockSignals(True)
@@ -448,7 +453,9 @@ class MainWindow(QMainWindow):
             if rc.hid_vendor_id and rc.hid_product_id:
                 self.remote.start_hid_capture(rc.hid_vendor_id, rc.hid_product_id)
             else:
-                logger.warning("hid_vendor_id/hid_product_id not set — HID capture disabled")
+                logger.warning(
+                    "hid_vendor_id/hid_product_id not set — HID capture disabled"
+                )
 
         if self.settings.app.fullscreen:
             self.showFullScreen()
@@ -520,7 +527,10 @@ class MainWindow(QMainWindow):
     def _on_remote_button(self, button):
         logger.debug(
             "remote button=%s state=%s focus=%s in_setting=%s",
-            button.name, self.state, self._remote_focus.name, self._remote_in_setting,
+            button.name,
+            self.state,
+            self._remote_focus.name,
+            self._remote_in_setting,
         )
 
         _busy = {BoothState.COUNTDOWN, BoothState.CAPTURING, BoothState.DOWNLOADING}
@@ -682,7 +692,11 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def start_countdown(self):
-        logger.info("start_countdown() state=%s camera_connected=%s", self.state, self._camera_connected)
+        logger.info(
+            "start_countdown() state=%s camera_connected=%s",
+            self.state,
+            self._camera_connected,
+        )
 
         if self.state not in {
             BoothState.LIVE_VIEW,
@@ -768,7 +782,10 @@ class MainWindow(QMainWindow):
 
         logger.info(
             "applying exposure ae_mode=%s iso=%s shutter=%s aperture=%s",
-            ae_mode, iso, shutter, aperture,
+            ae_mode,
+            iso,
+            shutter,
+            aperture,
         )
 
         self.backend.set_exposure(
@@ -823,7 +840,9 @@ class MainWindow(QMainWindow):
 
         logger.info(
             "exposure UX sync ae_mode=%s shutter_available=%s aperture_available=%s",
-            ae_mode, shutter_available, aperture_available,
+            ae_mode,
+            shutter_available,
+            aperture_available,
         )
 
         self.iso_combo.setEnabled(self._camera_connected)
@@ -847,8 +866,11 @@ class MainWindow(QMainWindow):
         logger.info(
             "exposure controls refreshed ae_mode_count=%s iso_count=%s "
             "shutter_count=%s aperture_count=%s state=%s",
-            self.ae_mode_combo.count(), self.iso_combo.count(),
-            self.shutter_combo.count(), self.aperture_combo.count(), state,
+            self.ae_mode_combo.count(),
+            self.iso_combo.count(),
+            self.shutter_combo.count(),
+            self.aperture_combo.count(),
+            state,
         )
 
         if self._camera_connected:
@@ -1013,7 +1035,9 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def on_backend_state_changed(self, state):
-        logger.info("on_backend_state_changed raw=%s current_ui_state=%s", state, self.state)
+        logger.info(
+            "on_backend_state_changed raw=%s current_ui_state=%s", state, self.state
+        )
         if not isinstance(state, BackendState):
             logger.debug("on_backend_state_changed ignored: not BackendState")
             return

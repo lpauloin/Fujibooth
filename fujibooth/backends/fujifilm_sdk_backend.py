@@ -1,11 +1,14 @@
 import queue
 import threading
 import time
+import logging
 
 from ..models.commands import WorkerCommand
 from ..models.state import BackendState, SessionState
 from ..sdk_bridge.wrapper import FujifilmSdkAdapter
 from .base import CameraBackend
+
+logger = logging.getLogger(__name__)
 
 
 class FujifilmSdkBackend(CameraBackend):
@@ -42,7 +45,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._exposure_refresh_scheduled = False
         self._exposure_apply_scheduled = False
 
-        print(f"[SDK] backend init adapter={self.adapter.__class__.__name__} ")
+        logger.debug(f"[SDK] backend init adapter={self.adapter.__class__.__name__} ")
 
     # ------------------------------------------------------------
     # State helpers
@@ -54,7 +57,7 @@ class FujifilmSdkBackend(CameraBackend):
             self.state = state
 
         if previous != state:
-            print(
+            logger.debug(
                 f"[SDK] session state {previous.name} -> {state.name} reason={reason}"
             )
 
@@ -80,10 +83,10 @@ class FujifilmSdkBackend(CameraBackend):
     def _safe_is_session_open(self):
         try:
             connected = self.adapter.is_connected()
-            print(f"[SDK] _safe_is_session_open() -> {connected}")
+            logger.debug(f"[SDK] _safe_is_session_open() -> {connected}")
             return connected
         except Exception as exc:
-            print(f"[SDK] _safe_is_session_open() error: {exc}")
+            logger.debug(f"[SDK] _safe_is_session_open() error: {exc}")
             return False
 
     def is_connected(self):
@@ -119,7 +122,7 @@ class FujifilmSdkBackend(CameraBackend):
             return
 
         self._next_reconnect_at = time.monotonic() + max(0.0, delay)
-        print(
+        logger.debug(
             f"[SDK] reconnect scheduled in {max(0.0, delay):.2f}s "
             f"target={self._next_reconnect_at:.3f}"
         )
@@ -169,7 +172,7 @@ class FujifilmSdkBackend(CameraBackend):
             if self._worker_thread is not None and self._worker_thread.is_alive():
                 return
 
-            print("[SDK] start()")
+            logger.info("start()")
             self._stopping = False
             self._stop_event.clear()
             self._next_live_poll_at = None
@@ -188,7 +191,7 @@ class FujifilmSdkBackend(CameraBackend):
             self._worker_thread.start()
 
     def stop(self):
-        print("[SDK] stop()")
+        logger.info("stop()")
         with self._lock:
             self._stopping = True
 
@@ -213,7 +216,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._set_session_state(SessionState.STOPPED, "backend stopped")
 
     def _worker_main(self):
-        print("[SDK] worker thread started")
+        logger.info("worker thread started")
         adapter_started = False
 
         try:
@@ -241,7 +244,7 @@ class FujifilmSdkBackend(CameraBackend):
                 self._dispatch_worker_command(command, payload)
 
         except Exception as exc:
-            print(f"[SDK] worker fatal error: {exc}")
+            logger.error(f"[SDK] worker fatal error: {exc}")
             self.emit_error(exc)
             self._set_session_state(SessionState.ERROR, f"worker fatal error: {exc}")
 
@@ -254,23 +257,29 @@ class FujifilmSdkBackend(CameraBackend):
                 try:
                     self.adapter.disconnect_camera()
                 except Exception as exc:
-                    print(f"[SDK] disconnect during worker shutdown ignored: {exc}")
+                    logger.warning(
+                        f"[SDK] disconnect during worker shutdown ignored: {exc}"
+                    )
                 self.emit_camera_disconnected()
 
             if adapter_started:
                 try:
                     self.adapter.stop()
                 except Exception as exc:
-                    print(f"[SDK] adapter.stop during worker shutdown ignored: {exc}")
+                    logger.warning(
+                        f"[SDK] adapter.stop during worker shutdown ignored: {exc}"
+                    )
 
-            print("[SDK] worker thread stopped")
+            logger.info("worker thread stopped")
 
     # ------------------------------------------------------------
     # Worker command handling
     # ------------------------------------------------------------
 
     def _dispatch_worker_command(self, command, payload):
-        print(f"[SDK] worker command={command.name} state={self._current_state().name}")
+        logger.debug(
+            f"[SDK] worker command={command.name} state={self._current_state().name}"
+        )
 
         if command is WorkerCommand.USB_CONNECTED:
             self._handle_usb_connected_from_worker(payload)
@@ -327,7 +336,7 @@ class FujifilmSdkBackend(CameraBackend):
     # ------------------------------------------------------------
 
     def handle_usb_connected(self, payload=None):
-        print(f"[SDK] handle_usb_connected payload={payload}")
+        logger.info(f"[SDK] handle_usb_connected payload={payload}")
         with self._lock:
             self._usb_present = True
 
@@ -337,7 +346,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._enqueue_command(WorkerCommand.USB_CONNECTED, payload)
 
     def handle_usb_disconnected(self):
-        print("[SDK] handle_usb_disconnected()")
+        logger.info("handle_usb_disconnected()")
         with self._lock:
             self._usb_present = False
 
@@ -348,7 +357,7 @@ class FujifilmSdkBackend(CameraBackend):
             return
 
         if self._safe_is_session_open():
-            print("[SDK] usb connect ignored: session already open")
+            logger.debug("usb connect ignored: session already open")
             return
 
         self._schedule_reconnect_from_worker(delay=0.0)
@@ -369,7 +378,7 @@ class FujifilmSdkBackend(CameraBackend):
         self.handle_usb_disconnected()
 
     def _connect_if_possible_from_worker(self):
-        print(
+        logger.debug(
             f"[SDK] _connect_if_possible_from_worker() "
             f"stopping={self._stopping} usb_present={self._usb_present} "
             f"state={self._current_state().name}"
@@ -379,7 +388,7 @@ class FujifilmSdkBackend(CameraBackend):
             return
 
         if self._safe_is_session_open():
-            print("[SDK] connect skipped: session already open")
+            logger.debug("connect skipped: session already open")
             return
 
         self._set_session_state(
@@ -388,11 +397,11 @@ class FujifilmSdkBackend(CameraBackend):
 
         try:
             descriptor = self.adapter.connect_camera()
-            print(
+            logger.debug(
                 f"[SDK] connect_camera ok model={descriptor.model} serial={descriptor.serial}"
             )
         except Exception as exc:
-            print(f"[SDK] connect failed: {exc}")
+            logger.error(f"[SDK] connect failed: {exc}")
             self.emit_error(exc)
             self._set_session_state(SessionState.WAITING_USB, f"connect failed: {exc}")
             self._schedule_reconnect_from_worker()
@@ -420,7 +429,7 @@ class FujifilmSdkBackend(CameraBackend):
     def _handle_session_lost_from_worker(
         self, reason, *, emit_signal=True, allow_reconnect=True
     ):
-        print(f"[SDK] _handle_session_lost_from_worker reason={reason}")
+        logger.info(f"[SDK] _handle_session_lost_from_worker reason={reason}")
 
         was_connected = self._safe_is_session_open()
         self._clear_runtime_deadlines_from_worker()
@@ -429,7 +438,7 @@ class FujifilmSdkBackend(CameraBackend):
             try:
                 self.adapter.disconnect_camera()
             except Exception as exc:
-                print(f"[SDK] adapter.disconnect_camera ignored: {exc}")
+                logger.warning(f"[SDK] adapter.disconnect_camera ignored: {exc}")
 
         if emit_signal and was_connected:
             self.emit_camera_disconnected()
@@ -452,7 +461,7 @@ class FujifilmSdkBackend(CameraBackend):
         self._enqueue_command(WorkerCommand.STOP_LIVE_VIEW)
 
     def _try_start_live_view_from_worker(self, reason):
-        print(f"[SDK] _try_start_live_view_from_worker reason={reason}")
+        logger.debug(f"[SDK] _try_start_live_view_from_worker reason={reason}")
 
         if self._stopping:
             return False
@@ -466,7 +475,7 @@ class FujifilmSdkBackend(CameraBackend):
         try:
             self.adapter.begin_live_view()
         except Exception as exc:
-            print(f"[SDK] start_live_view failed: {exc}")
+            logger.error(f"[SDK] start_live_view failed: {exc}")
             self._next_live_poll_at = None
             self._next_health_check_at = time.monotonic() + self._health_interval_s
 
@@ -485,7 +494,7 @@ class FujifilmSdkBackend(CameraBackend):
         return True
 
     def _stop_live_view_from_worker(self, reason):
-        print(f"[SDK] _stop_live_view_from_worker reason={reason}")
+        logger.debug(f"[SDK] _stop_live_view_from_worker reason={reason}")
 
         if self._current_state() is not SessionState.LIVE:
             return
@@ -498,7 +507,7 @@ class FujifilmSdkBackend(CameraBackend):
         try:
             self.adapter.end_live_view()
         except Exception as exc:
-            print(f"[SDK] end_live_view ignored: {exc}")
+            logger.warning(f"[SDK] end_live_view ignored: {exc}")
 
         if self._safe_is_session_open():
             self._set_session_state(SessionState.READY, reason)
@@ -515,7 +524,7 @@ class FujifilmSdkBackend(CameraBackend):
         try:
             frame = self.adapter.get_live_view_frame()
         except Exception as exc:
-            print(f"[SDK] get_live_view_frame failed: {exc}")
+            logger.warning(f"[SDK] get_live_view_frame failed: {exc}")
             if self._is_disconnect_error(exc):
                 self._handle_session_lost_from_worker(str(exc), emit_signal=True)
             else:
@@ -534,7 +543,7 @@ class FujifilmSdkBackend(CameraBackend):
     # ------------------------------------------------------------
 
     def _run_health_check_from_worker(self):
-        print(
+        logger.debug(
             f"[SDK] _run_health_check_from_worker() "
             f"state={self._current_state().name} usb_present={self._usb_present}"
         )
@@ -558,7 +567,7 @@ class FujifilmSdkBackend(CameraBackend):
     # ------------------------------------------------------------
 
     def request_exposure_data(self):
-        print(f"[SDK] request_exposure_data() state={self._current_state().name}")
+        logger.info(f"[SDK] request_exposure_data() state={self._current_state().name}")
 
         self._exposure_refresh_requested = True
         if not self._exposure_refresh_scheduled:
@@ -571,7 +580,7 @@ class FujifilmSdkBackend(CameraBackend):
         )
 
     def set_exposure(self, *, iso=None, shutter=None, aperture=None, ae_mode=None):
-        print(
+        logger.debug(
             f"[SDK] set_exposure() state={self._current_state().name} "
             f"iso={iso} shutter={shutter} aperture={aperture} ae_mode={ae_mode}"
         )
@@ -590,7 +599,7 @@ class FujifilmSdkBackend(CameraBackend):
     def _process_pending_exposure_refresh_from_worker(self):
         state = self._current_state()
         if state not in {SessionState.READY, SessionState.LIVE}:
-            print(f"[SDK] exposure refresh deferred: backend state={state.name}")
+            logger.debug(f"[SDK] exposure refresh deferred: backend state={state.name}")
             self._exposure_refresh_scheduled = False
             self._schedule_pending_commands_from_worker()
             return
@@ -616,7 +625,7 @@ class FujifilmSdkBackend(CameraBackend):
             current = self.adapter.get_exposure_state()
             self.emit_exposure_ready({"options": options, "state": current})
         except Exception as exc:
-            print(f"[SDK] exposure data query failed: {exc}")
+            logger.error(f"[SDK] exposure data query failed: {exc}")
             self.emit_exposure_failed(exc)
             if self._is_disconnect_error(exc):
                 self._handle_session_lost_from_worker(str(exc), emit_signal=True)
@@ -644,7 +653,7 @@ class FujifilmSdkBackend(CameraBackend):
             return
 
         if state not in {SessionState.READY, SessionState.LIVE}:
-            print(f"[SDK] exposure apply deferred: backend state={state.name}")
+            logger.debug(f"[SDK] exposure apply deferred: backend state={state.name}")
             self._latest_exposure_request = payload
             self._exposure_apply_scheduled = False
             self._schedule_pending_commands_from_worker()
@@ -672,7 +681,7 @@ class FujifilmSdkBackend(CameraBackend):
                 ae_mode=payload.get("ae_mode"),
             )
         except Exception as exc:
-            print(f"[SDK] set_exposure failed: {exc}")
+            logger.error(f"[SDK] set_exposure failed: {exc}")
             self.emit_error(exc)
             if self._is_disconnect_error(exc):
                 self._handle_session_lost_from_worker(str(exc), emit_signal=True)
@@ -698,13 +707,13 @@ class FujifilmSdkBackend(CameraBackend):
     # ------------------------------------------------------------
 
     def trigger_capture(self):
-        print(f"[SDK] trigger_capture() state={self._current_state().name}")
+        logger.info(f"[SDK] trigger_capture() state={self._current_state().name}")
         self._enqueue_command(WorkerCommand.CAPTURE)
 
     def _capture_photo_from_worker(self):
         state = self._current_state()
         if state not in {SessionState.READY, SessionState.LIVE}:
-            print(f"[SDK] capture skipped: invalid state={state.name}")
+            logger.debug(f"[SDK] capture skipped: invalid state={state.name}")
             return
 
         if not self._safe_is_session_open():
@@ -720,7 +729,7 @@ class FujifilmSdkBackend(CameraBackend):
         try:
             path = self.adapter.capture_photo(self.repository.captures_dir)
         except Exception as exc:
-            print(f"[SDK] capture failed: {exc}")
+            logger.error(f"[SDK] capture failed: {exc}")
             self.emit_error(exc)
             if self._is_disconnect_error(exc):
                 self._handle_session_lost_from_worker(str(exc), emit_signal=True)
@@ -737,7 +746,7 @@ class FujifilmSdkBackend(CameraBackend):
             raw = self.repository.save(path)
             display = self.repository.frame(raw) if self.repository.has_frame else raw
         except Exception as exc:
-            print(f"[SDK] repository error: {exc}")
+            logger.error(f"[SDK] repository error: {exc}")
             self.emit_error(exc)
             return
         self.emit_photo(display)

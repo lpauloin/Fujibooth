@@ -3,10 +3,13 @@ import ctypes.util
 import threading
 import time
 from dataclasses import dataclass
+import logging
 
 import usb.core
 import usb.backend.libusb1
 from PySide6.QtCore import QObject, QTimer, Signal
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -43,7 +46,7 @@ class USBMonitor(QObject):
         self._poll_timer.setInterval(poll_interval_ms)
         self._poll_timer.timeout.connect(self._poll_once)
 
-        print(
+        logger.info(
             "[USB-MONITOR] init "
             f"vendor_id={config.vendor_id} "
             f"product_ids={config.product_ids} "
@@ -55,19 +58,19 @@ class USBMonitor(QObject):
     # ------------------------------------------------------------------
 
     def start(self):
-        print("[USB-MONITOR] start()")
+        logger.info("start()")
 
         if self._try_start_libusb_hotplug():
-            print("[USB-MONITOR] hotplug mode enabled")
+            logger.info("hotplug mode enabled")
             self._emit_initial_state()
             return
 
-        print("[USB-MONITOR] hotplug unavailable -> fallback polling")
+        logger.info("hotplug unavailable -> fallback polling")
         self._poll_once()
         self._poll_timer.start()
 
     def stop(self):
-        print("[USB-MONITOR] stop()")
+        logger.info("stop()")
 
         self._poll_timer.stop()
         self._stop_libusb_hotplug()
@@ -108,12 +111,12 @@ class USBMonitor(QObject):
     # ------------------------------------------------------------------
 
     def _poll_once(self):
-        print("[USB-MONITOR] _poll_once()")
+        logger.debug("_poll_once()")
         payload = self._find_camera_payload()
         self._update_connection_state(payload)
 
     def _emit_initial_state(self):
-        print("[USB-MONITOR] _emit_initial_state()")
+        logger.debug("_emit_initial_state()")
         payload = self._find_camera_payload()
         self._update_connection_state(payload)
 
@@ -124,14 +127,14 @@ class USBMonitor(QObject):
     def _try_start_libusb_hotplug(self):
         try:
             libusb_path = ctypes.util.find_library("usb-1.0")
-            print(f"[USB-MONITOR] libusb path={libusb_path}")
+            logger.debug(f"[USB-MONITOR] libusb path={libusb_path}")
             if not libusb_path:
                 return False
 
             self._libusb = ctypes.CDLL(libusb_path)
 
             if self._backend is None:
-                print("[USB-MONITOR] no PyUSB libusb backend")
+                logger.debug("no PyUSB libusb backend")
                 return False
 
             self._libusb.libusb_init.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
@@ -186,7 +189,7 @@ class USBMonitor(QObject):
 
             self._ctx = ctypes.c_void_p()
             rc = self._libusb.libusb_init(ctypes.byref(self._ctx))
-            print(f"[USB-MONITOR] libusb_init rc={rc}")
+            logger.debug(f"[USB-MONITOR] libusb_init rc={rc}")
             if rc != 0:
                 self._ctx = None
                 return False
@@ -194,7 +197,7 @@ class USBMonitor(QObject):
             has_hotplug = self._libusb.libusb_has_capability(
                 self.LIBUSB_CAP_HAS_HOTPLUG
             )
-            print(f"[USB-MONITOR] libusb_has_capability(HOTPLUG)={has_hotplug}")
+            logger.debug(f"[USB-MONITOR] libusb_has_capability(HOTPLUG)={has_hotplug}")
             if not has_hotplug:
                 self._libusb.libusb_exit(self._ctx)
                 self._ctx = None
@@ -224,7 +227,7 @@ class USBMonitor(QObject):
                 None,
                 ctypes.byref(self._callback_handle),
             )
-            print(f"[USB-MONITOR] libusb_hotplug_register_callback rc={rc}")
+            logger.debug(f"[USB-MONITOR] libusb_hotplug_register_callback rc={rc}")
             if rc != 0:
                 self._libusb.libusb_exit(self._ctx)
                 self._ctx = None
@@ -241,7 +244,7 @@ class USBMonitor(QObject):
             return True
 
         except Exception as exc:
-            print(f"[USB-MONITOR] _try_start_libusb_hotplug failed: {exc}")
+            logger.error(f"[USB-MONITOR] _try_start_libusb_hotplug failed: {exc}")
             self._stop_libusb_hotplug()
             return False
 
@@ -249,7 +252,7 @@ class USBMonitor(QObject):
         if not self._hotplug_active and self._ctx is None:
             return
 
-        print("[USB-MONITOR] _stop_libusb_hotplug()")
+        logger.debug("_stop_libusb_hotplug()")
         self._event_thread_stop.set()
 
         if self._event_thread is not None:
@@ -264,18 +267,18 @@ class USBMonitor(QObject):
                         self._callback_handle.value,
                     )
                 except Exception as exc:
-                    print(f"[USB-MONITOR] hotplug deregister ignore: {exc}")
+                    logger.warning(f"[USB-MONITOR] hotplug deregister ignore: {exc}")
 
                 self._libusb.libusb_exit(self._ctx)
         except Exception as exc:
-            print(f"[USB-MONITOR] libusb shutdown ignore: {exc}")
+            logger.warning(f"[USB-MONITOR] libusb shutdown ignore: {exc}")
         finally:
             self._ctx = None
             self._libusb = None
             self._hotplug_active = False
 
     def _event_loop(self):
-        print("[USB-MONITOR] _event_loop start")
+        logger.debug("_event_loop start")
         completed = ctypes.c_int(0)
 
         while not self._event_thread_stop.is_set():
@@ -287,16 +290,16 @@ class USBMonitor(QObject):
                     ctypes.byref(completed),
                 )
                 if rc != 0:
-                    print(f"[USB-MONITOR] libusb_handle_events rc={rc}")
+                    logger.warning(f"[USB-MONITOR] libusb_handle_events rc={rc}")
                     time.sleep(0.2)
             except Exception as exc:
-                print(f"[USB-MONITOR] event loop error: {exc}")
+                logger.warning(f"[USB-MONITOR] event loop error: {exc}")
                 time.sleep(0.2)
 
-        print("[USB-MONITOR] _event_loop end")
+        logger.debug("_event_loop end")
 
     def _on_libusb_hotplug_event(self, ctx, device, event, user_data):
-        print(f"[USB-MONITOR] hotplug event={event}")
+        logger.debug(f"[USB-MONITOR] hotplug event={event}")
         payload = self._find_camera_payload()
         self._update_connection_state(payload)
         return 0
@@ -306,11 +309,11 @@ class USBMonitor(QObject):
     # ------------------------------------------------------------------
 
     def _find_camera_payload(self):
-        print("[USB-MONITOR] _find_camera_payload()")
+        logger.debug("_find_camera_payload()")
 
         backend = self._backend
         if backend is None:
-            print("[USB-MONITOR] no backend available")
+            logger.debug("no backend available")
             return None
 
         expected_vendor = self._vendor_id
@@ -320,7 +323,7 @@ class USBMonitor(QObject):
         try:
             devices = usb.core.find(find_all=True, backend=backend)
         except Exception as exc:
-            print(f"[USB-MONITOR] usb.core.find error: {exc}")
+            logger.warning(f"[USB-MONITOR] usb.core.find error: {exc}")
             return None
 
         for dev in devices:
@@ -340,7 +343,7 @@ class USBMonitor(QObject):
                 product_ok = not expected_products or dev.idProduct in expected_products
                 name_ok = not expected_name or expected_name in lowered_name
 
-                print(
+                logger.debug(
                     "[USB-MONITOR] candidate "
                     f"vid=0x{dev.idVendor:04x} pid=0x{dev.idProduct:04x} "
                     f"manufacturer={manufacturer!r} product={product!r} serial={serial!r} "
@@ -350,7 +353,7 @@ class USBMonitor(QObject):
                 # 1) strongest match: vendor + product + name
                 if vendor_ok and product_ok and name_ok:
                     label = manufacturer or product or "FUJIFILM"
-                    print("[USB-MONITOR] accepting device on full match")
+                    logger.info("accepting device on full match")
                     return {
                         "label": f"{label} connecté",
                         "serial": serial or "UNKNOWN",
@@ -362,7 +365,7 @@ class USBMonitor(QObject):
                 # Important for macOS where the camera often appears as "USB PTP Camera"
                 if vendor_ok and product_ok:
                     label = manufacturer or product or "FUJIFILM"
-                    print("[USB-MONITOR] accepting device on vendor+product match")
+                    logger.info("accepting device on vendor+product match")
                     return {
                         "label": f"{label} connecté",
                         "serial": serial or "UNKNOWN",
@@ -373,7 +376,7 @@ class USBMonitor(QObject):
                 # 3) fallback: vendor only, only if there is no configured product filter
                 if vendor_ok and not expected_products:
                     label = manufacturer or product or "FUJIFILM"
-                    print("[USB-MONITOR] accepting device on vendor-only fallback")
+                    logger.info("accepting device on vendor-only fallback")
                     return {
                         "label": f"{label} connecté",
                         "serial": serial or "UNKNOWN",
@@ -382,7 +385,7 @@ class USBMonitor(QObject):
                     }
 
             except Exception as exc:
-                print(f"[USB-MONITOR] candidate parse error: {exc}")
+                logger.warning(f"[USB-MONITOR] candidate parse error: {exc}")
 
         return None
 
@@ -393,7 +396,7 @@ class USBMonitor(QObject):
             value = usb.util.get_string(dev, index)
             return value or ""
         except Exception as exc:
-            print(f"[USB-MONITOR] get_string failed index={index}: {exc}")
+            logger.warning(f"[USB-MONITOR] get_string failed index={index}: {exc}")
             return ""
 
     # ------------------------------------------------------------------
@@ -403,7 +406,7 @@ class USBMonitor(QObject):
     def _update_connection_state(self, payload):
         now_connected = payload is not None
 
-        print(
+        logger.debug(
             f"[USB-MONITOR] update_connection_state "
             f"now_connected={now_connected} previous={self._connected} payload={payload}"
         )

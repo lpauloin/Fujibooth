@@ -43,11 +43,11 @@ LOGGING_CONFIG = {
         },
         # ── Camera backend ─────────────────────────────────────────────
         "fujibooth.backends.fujifilm_sdk_backend": {
-            "level": "INFO",
+            "level": "WARNING",
         },
         # ── SDK bridge ─────────────────────────────────────────────────
         "fujibooth.sdk_bridge.wrapper": {
-            "level": "INFO",
+            "level": "WARNING",
         },
         "fujibooth.sdk_bridge.xsdk_ctypes": {
             # Pure C-API binding noise — suppress by default
@@ -55,22 +55,22 @@ LOGGING_CONFIG = {
         },
         # ── Services ───────────────────────────────────────────────────
         "fujibooth.services.photo_repository": {
-            "level": "INFO",
+            "level": "WARNING",
         },
         "fujibooth.services.remote_control": {
-            "level": "INFO",
+            "level": "WARNING",
         },
         "fujibooth.services.usb_monitor": {
-            "level": "INFO",
+            "level": "WARNING",
         },
         "fujibooth.services.printer": {
-            "level": "INFO",
+            "level": "WARNING",
         },
         "fujibooth.services.bluetooth_monitor": {
-            "level": "INFO",
+            "level": "WARNING",
         },
         "fujibooth.services.instax_minilink": {
-            "level": "INFO",
+            "level": "WARNING",
         },
     },
     "root": {

@@ -3,8 +3,11 @@ from pathlib import Path
 import os
 
 import yaml
+import logging
 
 
+
+logger = logging.getLogger(__name__)
 @dataclass(slots=True)
 class AppConfig:
     window_title: str = "FujiBooth"
@@ -170,12 +173,12 @@ def load_settings(config_path=None):
         if candidate.exists():
             payload = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
             settings = build_settings(payload, config_path=candidate)
-            print(f"[CONFIG] loaded: {candidate}")
-            print(f"[CONFIG] captures_dir: {settings.captures_path}")
-            print(f"[CONFIG] output_dir:   {settings.output_path}")
+            logger.info("loaded: %s", candidate)
+            logger.info("captures_dir: %s", settings.captures_path)
+            logger.info("output_dir: %s", settings.output_path)
             return settings
     settings = build_settings({}, config_path=None)
-    print("[CONFIG] no config file found, using defaults")
-    print(f"[CONFIG] captures_dir: {settings.captures_path}")
-    print(f"[CONFIG] output_dir:   {settings.output_path}")
+    logger.info("no config file found, using defaults")
+    logger.info("captures_dir: %s", settings.captures_path)
+    logger.info("output_dir: %s", settings.output_path)
     return settings
