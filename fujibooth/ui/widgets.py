@@ -207,14 +207,9 @@ class LiveViewWidget(QFrame):
         self.overlay.hide()
         self.overlay.clear()
 
-    def set_status(self, text, color):
-        text = (text or "").strip()
-        if not text:
-            self.clear_status()
-            return
-
-        self.status_badge.setText(text)
-        self.status_badge.setStyleSheet(f"""
+    @staticmethod
+    def _badge_style(color):
+        return f"""
             QLabel {{
                 background: {color};
                 color: white;
@@ -223,10 +218,21 @@ class LiveViewWidget(QFrame):
                 font-size: 16px;
                 font-weight: 800;
             }}
-            """)
-        self.status_badge.adjustSize()
+            """
+
+    def _apply_badge(self, badge, text, color):
+        badge.setText((text or "").strip())
+        badge.setStyleSheet(self._badge_style(color))
+        badge.show()
         self._update_status_badge_position()
-        self.status_badge.show()
+
+    def set_status(self, text, color):
+        text = (text or "").strip()
+        if not text:
+            self.clear_status()
+            return
+        self._apply_badge(self.status_badge, text, color)
+        self.status_badge.adjustSize()
         self.status_badge.raise_()
 
     def clear_status(self):
@@ -235,19 +241,7 @@ class LiveViewWidget(QFrame):
         self._update_status_badge_position()
 
     def set_remote_status(self, text, color):
-        self.remote_badge.setText((text or "").strip())
-        self.remote_badge.setStyleSheet(f"""
-            QLabel {{
-                background: {color};
-                color: white;
-                padding: 8px 14px;
-                border-radius: 12px;
-                font-size: 16px;
-                font-weight: 800;
-            }}
-            """)
-        self.remote_badge.show()
-        self._update_status_badge_position()
+        self._apply_badge(self.remote_badge, text, color)
 
     def clear_remote_status(self):
         self.remote_badge.clear()
@@ -255,19 +249,7 @@ class LiveViewWidget(QFrame):
         self._update_status_badge_position()
 
     def set_printer_status(self, text, color):
-        self.printer_badge.setText((text or "").strip())
-        self.printer_badge.setStyleSheet(f"""
-            QLabel {{
-                background: {color};
-                color: white;
-                padding: 8px 14px;
-                border-radius: 12px;
-                font-size: 16px;
-                font-weight: 800;
-            }}
-            """)
-        self.printer_badge.show()
-        self._update_status_badge_position()
+        self._apply_badge(self.printer_badge, text, color)
 
     def clear_printer_status(self):
         self.printer_badge.clear()

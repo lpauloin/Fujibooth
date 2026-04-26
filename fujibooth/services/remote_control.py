@@ -15,7 +15,7 @@ HID reports from Beauty-R1 (decoded from report descriptor):
 
 With hidapi, d.read() returns [report_id, byte0, byte1, ...].
 
-Press each button and watch the "[HID] report id=X data=..." lines to identify
+Press each button and watch the "report id=X data=..." lines to identify
 the mapping, then add entries to BEAUTY_R1_REPORT_MAP.
 """
 
@@ -135,16 +135,16 @@ class HidDeviceCapture:
             logger.debug("no HID devices found")
             return
 
-        logger.debug(f"[HID-ENUM] {len(all_devices)} HID device(s) visible:")
+        logger.debug(f"{len(all_devices)} HID device(s) visible:")
         for d in all_devices:
             logger.debug(
-                f"[HID-ENUM]   VID={d['vendor_id']:#06x} PID={d['product_id']:#06x}"
+                f"  VID={d['vendor_id']:#06x} PID={d['product_id']:#06x}"
                 f"  {d.get('manufacturer_string', '')} / {d.get('product_string', '')}"
             )
 
     def _run(self):
         logger.debug(
-            f"[HID] capture thread started — looking for "
+            f"capture thread started — looking for "
             f"VID={self._vid:#06x} PID={self._pid:#06x}"
         )
         self._log_all_hid_devices()
@@ -158,16 +158,16 @@ class HidDeviceCapture:
             try:
                 dev = hid.Device(self._vid, self._pid)
             except OSError as exc:
-                logger.warning(f"[HID] open failed: {exc}")
+                logger.warning(f"open failed: {exc}")
                 self._stop.wait(timeout=2.0)
                 continue
 
             logger.debug(
-                f"[HID] device opened VID={self._vid:#06x} "
+                f"device opened VID={self._vid:#06x} "
                 f"PID={self._pid:#06x} — reading reports"
             )
             logger.debug(
-                "[HID] Press each button — copy the [HID-MAP] lines into "
+                "Press each button — copy the [HID-MAP] lines into "
                 "BEAUTY_R1_REPORT_MAP"
             )
 
@@ -180,7 +180,7 @@ class HidDeviceCapture:
                         self._on_report(report_id, data)
 
             except OSError as exc:
-                logger.warning(f"[HID] device error: {exc}")
+                logger.warning(f"device error: {exc}")
 
             finally:
                 try:
@@ -278,7 +278,7 @@ class RemoteControlService(QObject):
     def _on_hid_report(self, report_id, data):
         hex_data = data.hex(" ") if data else "(empty)"
         logger.debug(
-            f"[HID] report id={report_id}  data={hex_data}  "
+            f"report id={report_id}  data={hex_data}  "
             f"bits={' '.join(f'{b:08b}' for b in data)}"
         )
 
@@ -286,7 +286,7 @@ class RemoteControlService(QObject):
 
         btn = self._decode_report(report_id, data)
         if btn is not None:
-            logger.debug(f"[HID] -> {btn.name}")
+            logger.debug(f"-> {btn.name}")
             self.button_pressed.emit(btn)
 
     def _print_mapping_hints(self, report_id, data):
@@ -301,12 +301,12 @@ class RemoteControlService(QObject):
                     mapped = BEAUTY_R1_REPORT_MAP.get(key)
                     if mapped:
                         logger.debug(
-                            f"[HID-MAP]   (3, 0, {mask:#04x}): "
+                            f"  (3, 0, {mask:#04x}): "
                             f"RemoteButton.{mapped.name}  ✓ mapped"
                         )
                     else:
                         logger.debug(
-                            f"[HID-MAP]   (3, 0, {mask:#04x}): "
+                            f"  (3, 0, {mask:#04x}): "
                             f"RemoteButton.???{hint}"
                         )
 
@@ -321,12 +321,12 @@ class RemoteControlService(QObject):
                     mapped = BEAUTY_R1_REPORT_MAP.get(key)
                     if mapped:
                         logger.debug(
-                            f"[HID-MAP]   (4, 0, {mask:#04x}): "
+                            f"  (4, 0, {mask:#04x}): "
                             f"RemoteButton.{mapped.name}  ✓ mapped"
                         )
                     else:
                         logger.debug(
-                            f"[HID-MAP]   (4, 0, {mask:#04x}): "
+                            f"  (4, 0, {mask:#04x}): "
                             f"RemoteButton.???{hint}"
                         )
 
@@ -450,14 +450,14 @@ class RemoteControlService(QObject):
         with self._btn_lock:
             if self._btn_state is not BtnState.PENDING_CENTER:
                 logger.debug(
-                    f"[BTN] ignored direction {btn.name} "
+                    f"ignored direction {btn.name} "
                     f"while state={self._btn_state.name}"
                 )
                 return None
 
             self._cancel_center_timer_locked()
             self._btn_state = BtnState.BUTTON_FIRED
-            logger.debug(f"[BTN] PENDING_CENTER → BUTTON_FIRED ({btn.name})")
+            logger.debug(f"PENDING_CENTER → BUTTON_FIRED ({btn.name})")
 
             self._arm_reset_timer_locked()
 
@@ -493,7 +493,7 @@ class RemoteControlService(QObject):
 
         if self._btn_state is not BtnState.IDLE:
             logger.debug(
-                f"[BTN] button down ignored while state={self._btn_state.name}"
+                f"button down ignored while state={self._btn_state.name}"
             )
             return
 
@@ -544,7 +544,7 @@ class RemoteControlService(QObject):
 
             if self._btn_state is not BtnState.PENDING_CENTER:
                 logger.debug(
-                    f"[BTN] center timeout ignored "
+                    f"center timeout ignored "
                     f"while state={self._btn_state.name}"
                 )
                 return
@@ -593,7 +593,7 @@ class RemoteControlService(QObject):
             if self._mouse_btn1_down:
                 self._suppress_until_release = True
 
-            logger.debug(f"[BTN] {old_state.name} → IDLE (reset timeout)")
+            logger.debug(f"{old_state.name} → IDLE (reset timeout)")
 
     def _reset_button_state_locked(self, reason):
         self._cancel_center_timer_locked()
@@ -602,7 +602,7 @@ class RemoteControlService(QObject):
         old_state = self._btn_state
         self._btn_state = BtnState.IDLE
 
-        logger.debug(f"[BTN] {old_state.name} → IDLE ({reason})")
+        logger.debug(f"{old_state.name} → IDLE ({reason})")
 
     # ------------------------------------------------------------------
     # Fallback: Qt keyboard interception
@@ -613,11 +613,11 @@ class RemoteControlService(QObject):
         button = self._key_map.get(key)
 
         if button is not None:
-            logger.debug(f"[REMOTE] key={key_name} ({key}) -> {button.name}")
+            logger.debug(f"key={key_name} ({key}) -> {button.name}")
             self.button_pressed.emit(button)
             return True
 
-        logger.debug(f"[REMOTE] unmapped key={key_name} ({key})")
+        logger.debug(f"unmapped key={key_name} ({key})")
         return False
 
     # ------------------------------------------------------------------
@@ -637,7 +637,7 @@ class RemoteControlService(QObject):
         )
         self._hid_monitor_thread.start()
 
-        logger.info(f"[REMOTE-HID] monitor started for '{device_name}'")
+        logger.info(f"monitor started for '{device_name}'")
 
     def _hid_monitor_worker(self, device_name, interval):
         last = None
@@ -649,10 +649,10 @@ class RemoteControlService(QObject):
                 last = connected
 
                 if connected:
-                    logger.info(f"[REMOTE-HID] '{device_name}' connected")
+                    logger.info(f"'{device_name}' connected")
                     self.hid_connected.emit(device_name)
                 else:
-                    logger.info(f"[REMOTE-HID] '{device_name}' disconnected")
+                    logger.info(f"'{device_name}' disconnected")
                     self.hid_disconnected.emit(device_name)
 
             self._hid_stop.wait(timeout=interval)
@@ -691,6 +691,6 @@ def _is_hid_device_connected(device_name):
         return f'"Product" = "{device_name}"' in out
 
     except Exception as exc:
-        logger.warning(f"[REMOTE-HID] connection check failed: {exc}")
+        logger.warning(f"connection check failed: {exc}")
 
     return False

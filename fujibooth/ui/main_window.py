@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self._printer_label = "Printer"
         self._printer_monitor_started = False
         self._badges_visible = True
+        self._loading_exposure_controls = False
 
         self.setWindowTitle(settings.app.window_title)
         self.setStyleSheet(f"background: {settings.ui.background_color}; color: white;")
@@ -166,9 +167,6 @@ class MainWindow(QMainWindow):
 
         self.print_button_timer = QTimer(self)
         self.print_button_timer.setSingleShot(True)
-        self.print_button_timer.timeout.connect(
-            self.print_button.hide if hasattr(self, "print_button") else lambda: None
-        )
 
         self.return_timer = QTimer(self)
         self.return_timer.setSingleShot(True)
@@ -383,7 +381,7 @@ class MainWindow(QMainWindow):
 
         # Exposure refresh is asynchronous now. The backend serializes every
         # SDK call through its command queue, so the UI only requests work here.
-        if getattr(self, "_loading_exposure_controls", False):
+        if self._loading_exposure_controls:
             logger.debug("_load_exposure_controls skipped: already running")
             return
 
@@ -404,22 +402,8 @@ class MainWindow(QMainWindow):
         self.live_view.set_freeze_frame(False)
         self._show_camera_badge(True)
 
-    def _apply_countdown_ui(self):
-        logger.debug("_apply_countdown_ui()")
-        self._show_gallery(False)
-        self.print_button.hide()
-        self.live_view.set_freeze_frame(False)
-        self._show_camera_badge(False)
-
-    def _apply_capture_ui(self):
-        logger.debug("_apply_capture_ui()")
-        self._show_gallery(False)
-        self.print_button.hide()
-        self.live_view.set_freeze_frame(False)
-        self._show_camera_badge(False)
-
-    def _apply_freeze_ui(self):
-        logger.debug("_apply_freeze_ui()")
+    def _apply_busy_ui(self):
+        logger.debug("_apply_busy_ui()")
         self._show_gallery(False)
         self.print_button.hide()
         self.live_view.set_freeze_frame(False)
@@ -718,7 +702,7 @@ class MainWindow(QMainWindow):
         self.print_button_timer.stop()
         self.freeze_timer.stop()
         self.return_timer.stop()
-        self._apply_countdown_ui()
+        self._apply_busy_ui()
 
         self.countdown_value = self.settings.app.countdown_seconds
         self.live_view.show_overlay_text(str(self.countdown_value), font_px=150)
@@ -737,7 +721,7 @@ class MainWindow(QMainWindow):
 
         self.countdown_timer.stop()
         self._set_state(BoothState.CAPTURING)
-        self._apply_capture_ui()
+        self._apply_busy_ui()
         self.live_view.show_overlay_text("📸", font_px=150)
         self.message_label.setText("Capturing...")
 
@@ -941,7 +925,7 @@ class MainWindow(QMainWindow):
         self.current_freeze_pixmap = freeze_pixmap
         self.selected_photo = display_path
         self._set_state(BoothState.FREEZE)
-        self._apply_freeze_ui()
+        self._apply_busy_ui()
 
         self.live_view.hide_overlay()
         self.live_view.set_pixmap(freeze_pixmap)
@@ -1061,7 +1045,7 @@ class MainWindow(QMainWindow):
             self.message_label.setText("Tap the image to start the photobooth")
             if self._camera_connected:
                 self._set_exposure_controls_enabled(True)
-                if not getattr(self, "_loading_exposure_controls", False):
+                if not self._loading_exposure_controls:
                     self._reapply_combo_enabled_state()
 
         elif state is BackendState.LIVE_VIEW:
@@ -1072,7 +1056,7 @@ class MainWindow(QMainWindow):
                 self.message_label.setText("Tap the image to start the photobooth")
             if self._camera_connected:
                 self._set_exposure_controls_enabled(True)
-                if not getattr(self, "_loading_exposure_controls", False):
+                if not self._loading_exposure_controls:
                     self._reapply_combo_enabled_state()
 
         elif state is BackendState.UPDATING_CAMERA_PARAMS:
@@ -1086,12 +1070,12 @@ class MainWindow(QMainWindow):
 
         elif state is BackendState.CAPTURING:
             self._set_state(BoothState.CAPTURING)
-            self._apply_capture_ui()
+            self._apply_busy_ui()
             self.message_label.setText("Capturing...")
 
         elif state is BackendState.DOWNLOADING:
             self._set_state(BoothState.DOWNLOADING)
-            self._apply_capture_ui()
+            self._apply_busy_ui()
             self.message_label.setText("Downloading photo...")
 
         self._debug_dump_ui_state("after on_backend_state_changed")
@@ -1163,11 +1147,3 @@ class MainWindow(QMainWindow):
         photos = self.repository.recent(limit=50)
         logger.info("refresh_gallery photos=%s", len(photos))
         self.gallery.set_photos(photos)
-
-
-def run_app(settings):
-    logger.info("run_app()")
-    app = QApplication.instance() or QApplication([])
-    window = MainWindow(settings)
-    window.start_services()
-    return app.exec()
